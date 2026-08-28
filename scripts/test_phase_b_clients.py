@@ -3,6 +3,7 @@
 
 import asyncio
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -14,8 +15,8 @@ import memcore
 SERVER_SCRIPT = str(Path(__file__).parent / "memcore_mcp.py")
 EXPECTED_TOOLS = {
     "memory_search", "memory_recent", "memory_get", "memory_scopes",
-    "memory_stats", "memory_history", "memory_write", "memory_archive",
-    "memory_restore", "memory_healthcheck",
+    "memory_stats", "memory_history", "memory_list", "memory_events",
+    "memory_write", "memory_archive", "memory_restore", "memory_healthcheck",
 }
 
 
@@ -23,6 +24,7 @@ async def check(actor):
     params = StdioServerParameters(
         command=sys.executable,
         args=[SERVER_SCRIPT, "--actor", actor, "--origin", "terminal", "--session-ref", f"phase-b:{actor}"],
+        env=dict(os.environ),  # propagate MEMCORE_DB_PATH so the subprocess uses the same DB
     )
     async with stdio_client(params) as (read, write):
         async with ClientSession(read, write) as session:

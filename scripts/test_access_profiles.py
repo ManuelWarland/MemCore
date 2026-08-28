@@ -2,6 +2,7 @@
 """Verify the 4 access profiles actually enforce what they claim."""
 
 import asyncio
+import os
 import sys
 from pathlib import Path
 
@@ -16,7 +17,7 @@ SERVER_SCRIPT = str(Path(__file__).parent / "memcore_mcp.py")
 
 
 async def check(label, extra_args):
-    params = StdioServerParameters(command=sys.executable, args=[SERVER_SCRIPT] + extra_args)
+    params = StdioServerParameters(command=sys.executable, args=[SERVER_SCRIPT] + extra_args, env=dict(os.environ))
     async with stdio_client(params) as (read, write):
         async with ClientSession(read, write) as session:
             await session.initialize()

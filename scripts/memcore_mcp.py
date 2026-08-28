@@ -105,6 +105,31 @@ def memory_get(scope: str, name: str, include_archived: bool = False) -> dict | 
 
 
 @server.tool()
+def memory_list(scope: str | None = None, type: str | None = None,
+                archived: bool = False, limit: int = 100) -> list[dict]:
+    """Browse entries by scope / type / archived state, WITHOUT a search query.
+
+    Use this to see everything in a project scope (onboarding to a codebase),
+    every entry of one type (e.g. all `feedback`), or what has been archived.
+    `archived=True` returns archived entries instead of active ones.
+    """
+    try:
+        return memcore.list_entries(_effective_scope(scope), type,
+                                    True if archived else False, limit)
+    except memcore.ValidationError as e:
+        return [{"error": str(e)}]
+
+
+@server.tool()
+def memory_events(scope: str | None = None, name: str | None = None, limit: int = 50) -> list[dict]:
+    """Read the append-only audit log: who wrote/updated/archived what, when,
+    and any conflicts or secret redactions. Read-only, available on any
+    connection. Scope-locked connections only see their own scope's events.
+    """
+    return memcore.get_events(_effective_scope(scope), name, limit)
+
+
+@server.tool()
 def memory_scopes() -> list[dict]:
     """List every known project/topic scope and how many entries each has."""
     all_scopes = memcore.list_scopes()
@@ -143,6 +168,11 @@ if not READONLY:
     ) -> dict:
         """Record a new fact, or update an existing one (same scope+name upserts).
 
+        Secret-shaped values in `content` (API keys, tokens, `password: …`
+        lines) are redacted to `[REDACTED]` before storage; if any were, the
+        result includes `"redacted": [<codes>]`. `description` over 500 chars is
+        truncated, not rejected.
+
         Args:
             scope: Project/topic scope this fact belongs to.
             type: One of user / feedback / project / reference.
@@ -151,14 +181,18 @@ if not READONLY:
             description: One-line summary of what this entry covers.
         """
         try:
-            entry_id = memcore.add_entry(
+            meta = memcore.add_entry(
                 _effective_scope(scope), type, name, content, description,
                 expected_updated_at=expected_updated_at,
                 actor=ACTOR, origin=ORIGIN, session_ref=SESSION_REF,
+                return_meta=True,
             )
         except memcore.ValidationError as e:
             return {"ok": False, "error": str(e)}
-        return {"ok": True, "id": entry_id}
+        out = {"ok": True, "id": meta["id"]}
+        if meta["redacted"]:
+            out["redacted"] = meta["redacted"]  # secret-shaped values were stripped before storing
+        return out
 
     @server.tool()
     def memory_archive(scope: str, name: str, reason: str) -> dict:

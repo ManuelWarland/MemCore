@@ -4,6 +4,7 @@ client would (stdio), list tools, and call memory_search. Proves the server
 works before relying on a Claude Code session restart to pick it up."""
 
 import asyncio
+import os
 import sys
 from pathlib import Path
 
@@ -18,7 +19,7 @@ SERVER_SCRIPT = str(Path(__file__).parent / "memcore_mcp.py")
 
 
 async def main():
-    params = StdioServerParameters(command=sys.executable, args=[SERVER_SCRIPT])
+    params = StdioServerParameters(command=sys.executable, args=[SERVER_SCRIPT], env=dict(os.environ))
     async with stdio_client(params) as (read, write):
         async with ClientSession(read, write) as session:
             await session.initialize()

@@ -25,7 +25,8 @@ is where those get written once and found again — by you or by the next assist
 | **Safe concurrency** | Optimistic locking via `expected_updated_at`. Concurrent writers get a `conflict` — nothing is silently overwritten. |
 | **Reversible deletes** | Archive (soft-delete) → restore. Overwritten versions kept in history. |
 | **Per-connection access control** | `--readonly` and/or `--scope <name>` sandboxing, **enforced server-side** (a locked connection cannot escape its scope even if it asks). |
-| **Secret hygiene** | Markdown import redacts common secret patterns and skips `credentials_*` files by design. |
+| **Secret hygiene** | Secret-shaped values (API keys, tokens, `password: …` lines) are **redacted** on write — the note is kept, the value stripped, the redaction flagged and audited. `credentials_*` files are skipped from import by filename. |
+| **Incremental sync** | `memcore.py sync` re-imports only the Markdown files whose mtime changed since last time — a run that changed nothing touches the DB zero times. |
 | **Zero dependencies** | Python 3.11+ standard library only. No `pip install`. |
 
 ---
@@ -54,6 +55,9 @@ Works everywhere, no MCP support required. Everything prints JSON on stdout.
 ```bash
 python scripts/memcore.py search "telegram rate limit"
 python scripts/memcore.py recent
+python scripts/memcore.py list --scope my-project           # browse a scope
+python scripts/memcore.py list --type feedback              # all feedback entries
+python scripts/memcore.py list --archived                   # what's archived
 python scripts/memcore.py scopes
 python scripts/memcore.py stats
 
@@ -64,8 +68,9 @@ python scripts/memcore.py add \
   --description "One-line summary used for recall ranking" \
   --content "The full note."
 
-python scripts/memcore.py backup           # consistent copy via SQLite backup API
-python scripts/memcore.py backup --dest /path/to/backups/memcore.db
+python scripts/memcore.py sync                              # incremental .md -> DB re-import
+python scripts/memcore.py backup [--dest PATH]              # consistent copy (SQLite backup API)
+python scripts/memcore.py events [--scope X] [--prune-older-than-days 180]
 ```
 
 `type` is one of `user` / `feedback` / `project` / `reference` (see
@@ -125,7 +130,9 @@ assistant read-only (or sandboxed), widen only after trust.
 | `memory_search` | `query`, `scope?`, `limit?`, `debug?` | Full-text search across all scopes (AND→OR fallback). `debug=true` returns the matched mode + raw queries. |
 | `memory_write` | `scope`, `type`, `name`, `content`, `description?`, `expected_updated_at?` | Create or update. Pass `expected_updated_at` to guard against concurrent overwrites. |
 | `memory_get` | `scope`, `name` | One entry. |
+| `memory_list` | `scope?`, `type?`, `archived?`, `limit?` | Browse entries without a query — everything in a scope, all of one type, or what's archived. |
 | `memory_recent` | `scope?`, `limit?` | Most recently modified entries. |
+| `memory_events` | `scope?`, `name?`, `limit?` | Read the append-only audit log (writes, conflicts, redactions). |
 | `memory_history` | `scope`, `name`, `limit?` | Previous versions of an overwritten/deleted entry. |
 | `memory_archive` / `memory_restore` | `scope`, `name`, `reason` | Reversible soft-delete / undelete. |
 | `memory_scopes` | — | Scopes + entry counts. |
@@ -221,12 +228,21 @@ chars, `scope`/`name`/`description` ≤ 500 chars. Invalid writes return
 
 ---
 
-## What is NOT stored (security)
+## Secrets
 
-Files named `credentials_*.md` in a Markdown import tree are **deliberately
-excluded**. Secrets don't belong in a store whose purpose is to be queried by
-several AI tools. If an assistant needs a credential, it should ask the user
-directly — not look here.
+Two layers:
+
+1. **`credentials_*.md` files** in a Markdown import tree are **excluded by
+   filename** — never imported.
+2. **Everything else is redacted, not rejected.** On any write, secret-shaped
+   substrings (private keys, `ghp_…` / `github_pat_…`, `AKIA…`, `sk-…` /
+   `sk-ant-…`, `AIza…`, Telegram bot tokens, JWTs, `password: <value>` /
+   `api_key = <value>` lines) are replaced with `[REDACTED]`. The surrounding
+   note is kept, the redaction is returned to the caller (`"redacted": [...]`)
+   and logged to `memory_events`. A note that merely *discusses* a secret format
+   is fine; a real leaked value is stripped before it hits disk.
+
+If an assistant needs an actual credential, it should ask the user — not look here.
 
 ---
 

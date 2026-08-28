@@ -109,6 +109,7 @@ def main():
                     content=parsed["content"],
                     description=parsed["description"],
                     source_path=str(md_file),
+                    source_mtime=md_file.stat().st_mtime,
                 )
             except memcore.ValidationError as e:
                 # A single file that trips a validation rule (secret guard,

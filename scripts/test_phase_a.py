@@ -45,13 +45,15 @@ def main():
         require(memcore.restore_entry("test", "durable", "test restore", "codex", "terminal"), "restore failed")
         require(memcore.search("contenu modifié", "test"), "restored entry not searchable")
 
-        fake_secret = "sk-proj-" + "A" * 28
-        try:
-            memcore.add_entry("test", "reference", "blocked", fake_secret, actor="codex", origin="terminal")
-            raise AssertionError("secret was accepted")
-        except memcore.ValidationError as exc:
-            require(str(exc).startswith("secret_detected"), "wrong secret error")
-        require(memcore.get_entry("test", "blocked", True) is None, "secret row exists")
+        # Secrets are REDACTED (not rejected): the note is kept, the value stripped.
+        fake_secret = "avant ghp_" + "A" * 36 + " apres"
+        meta = memcore.add_entry("test", "reference", "redacted-note", fake_secret,
+                                 actor="codex", origin="terminal", return_meta=True)
+        require("github_token" in meta["redacted"], "secret not flagged as redacted")
+        stored = memcore.get_entry("test", "redacted-note", True)
+        require(stored is not None, "redacted note was not stored")
+        require("ghp_" not in stored["content"] and "[REDACTED]" in stored["content"], "secret not stripped")
+        require("avant" in stored["content"] and "apres" in stored["content"], "surrounding text lost")
 
         try:
             memcore.delete_entry("test", "durable")

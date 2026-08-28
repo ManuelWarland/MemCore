@@ -42,22 +42,46 @@ class ConflictError(ValidationError):
     pass
 
 
-SECRET_NAME_RE = re.compile(r"(?:^|[-_.\s])(credentials?|secrets?|passwords?|tokens?|mots?[-_ ]?de[-_ ]?passe)(?:$|[-_.\s])", re.I)
+# Secrets are REDACTED, not rejected (changed 2026-08-29). Rejecting the whole
+# entry silently lost legitimate notes that merely *discuss* a secret format,
+# and a slug containing "token"/"secret" (e.g. a note literally about token
+# costs) tripped a name-based check. Now: strip the value, keep the note, flag
+# it. `credentials_*.md` files stay excluded from import by filename (see the
+# importers) — that convention is unchanged.
 SECRET_CONTENT_PATTERNS = [
-    ("private_key", re.compile(r"-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----")),
-    ("github_token", re.compile(r"\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,})\b")),
-    ("openai_key", re.compile(r"\bsk-(?:proj-)?[A-Za-z0-9_-]{20,}\b")),
-    ("generic_assignment", re.compile(r"(?im)^\s*(?:api[_ -]?key|access[_ -]?token|refresh[_ -]?token|password|mot[_ -]?de[_ -]?passe)\s*[:=]\s*[^\s<>{}\[\]]{12,}\s*$")),
+    ("private_key", re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----.*?-----END [A-Z ]*PRIVATE KEY-----", re.DOTALL)),
+    ("github_token", re.compile(r"\b(?:gh[pousr]_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{30,})\b")),
+    ("aws_key", re.compile(r"\bAKIA[0-9A-Z]{16}\b")),
+    ("openai_anthropic_key", re.compile(r"\bsk-(?:ant-|proj-)?[A-Za-z0-9_-]{24,}\b")),
+    ("google_key", re.compile(r"\bAIza[0-9A-Za-z_-]{35}\b")),
+    ("telegram_token", re.compile(r"\b\d{8,10}:AA[A-Za-z0-9_-]{30,}\b")),
+    ("jwt", re.compile(r"\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b")),
+    # label (anywhere on a line) + separator + a value that actually looks
+    # secret-ish (12+ chars, at least one digit — cuts "password: required").
+    ("labelled_secret", re.compile(r"(?i)((?:api[_ -]?key|access[_ -]?token|refresh[_ -]?token|client[_ -]?secret|secret[_ -]?key|bearer|password|passwd|mot[_ -]?de[_ -]?passe|psk)[^\S\r\n]*[:=][^\S\r\n]*['\"`]?)(?=[^\s<>{}\[\]'\"`]*\d)[^\s<>{}\[\]'\"`]{12,}(['\"`]?)")),
 ]
 
 
-def _detect_secret(scope, name, content):
-    if SECRET_NAME_RE.search(str(scope)) or SECRET_NAME_RE.search(str(name)):
-        return "sensitive_name"
+def redact_secrets(text):
+    """Replace secret-shaped substrings with a marker. Returns (text, codes)."""
+    text = str(text)
+    codes = []
     for code, pattern in SECRET_CONTENT_PATTERNS:
-        if pattern.search(str(content)):
-            return code
-    return None
+        repl = r"\1[REDACTED]\2" if code == "labelled_secret" else "[REDACTED]"
+        text, n = pattern.subn(repl, text)
+        if n:
+            codes.append(code)
+    return text, codes
+
+
+DESC_MAX = MAX_FIELD_CHARS
+
+
+def _clip_description(description):
+    description = str(description or "")
+    if len(description) <= DESC_MAX:
+        return description
+    return description[:DESC_MAX - 1].rstrip() + "…"
 
 
 def _validate_entry(scope, type_, name, content, description):
@@ -69,7 +93,7 @@ def _validate_entry(scope, type_, name, content, description):
         raise ValidationError(f"type must be one of {sorted(VALID_TYPES)}, got {type_!r}")
     if len(scope) > MAX_FIELD_CHARS or len(name) > MAX_FIELD_CHARS:
         raise ValidationError(f"scope/name must be under {MAX_FIELD_CHARS} chars")
-    if len(description) > MAX_FIELD_CHARS:
+    if len(description) > MAX_FIELD_CHARS:  # caller should have clipped; hard guard
         raise ValidationError(f"description must be under {MAX_FIELD_CHARS} chars")
     if not content or not content.strip():
         raise ValidationError("content must not be empty")
@@ -165,12 +189,16 @@ END;
 """
 
 
+SCHEMA_VERSION = 2  # bump when adding a migration step below
+
+
 def _migrate(con):
     columns = {row[1] for row in con.execute("PRAGMA table_info(entries)")}
     for column, declaration in (
         ("archived_at", "TEXT"),
         ("archived_by", "TEXT"),
         ("archive_reason", "TEXT"),
+        ("source_mtime", "REAL"),  # v2: last-imported mtime of source_path, for incremental `sync`
     ):
         if column not in columns:
             con.execute(f"ALTER TABLE entries ADD COLUMN {column} {declaration}")
@@ -198,6 +226,7 @@ def _migrate(con):
         WHERE new.archived_at IS NULL;
     END;
     """)
+    con.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
     con.commit()
 
 
@@ -236,19 +265,14 @@ def _event(con, operation, actor, origin, session_ref=None, scope=None, name=Non
 
 
 def add_entry(scope, type_, name, content, description="", source_path=None,
-              expected_updated_at=None, actor="legacy", origin="legacy", session_ref=None):
+              expected_updated_at=None, actor="legacy", origin="legacy", session_ref=None,
+              source_mtime=None, return_meta=False, _con=None):
+    description = _clip_description(description)
     _validate_entry(scope, type_, name, content, description)
-    secret_code = _detect_secret(scope, name, content)
-    if secret_code:
-        con = connect()
-        try:
-            _event(con, "memory_write", actor, origin, session_ref, scope, name,
-                   outcome="rejected", reason="secret_detected", details={"detector": secret_code})
-            con.commit()
-        finally:
-            con.close()
-        raise ValidationError("secret_detected: sensitive content was refused")
-    con = connect()
+    content, redactions = redact_secrets(content)
+
+    con = _con or connect()
+    owns_con = _con is None
     try:
         ts = now()
         current = con.execute(
@@ -259,34 +283,43 @@ def add_entry(scope, type_, name, content, description="", source_path=None,
             if current[2] is not None:
                 _event(con, "memory_write", actor, origin, session_ref, scope, name,
                        current[0], "conflict", "entry_archived")
-                con.commit()
+                if owns_con:
+                    con.commit()
                 raise ConflictError("entry_archived: restore the entry before updating it")
             if expected_updated_at is not None and expected_updated_at != current[1]:
                 _event(con, "memory_write", actor, origin, session_ref, scope, name,
                        current[0], "conflict", "stale_version")
-                con.commit()
+                if owns_con:
+                    con.commit()
                 raise ConflictError("conflict: expected_updated_at does not match current version")
             con.execute(
-                """UPDATE entries SET type=?, description=?, content=?, source_path=?, updated_at=?
-                   WHERE id=?""",
-                (type_, description, content, source_path, ts, current[0]),
+                """UPDATE entries SET type=?, description=?, content=?, source_path=?,
+                   source_mtime=?, updated_at=? WHERE id=?""",
+                (type_, description, content, source_path, source_mtime, ts, current[0]),
             )
             entry_id = current[0]
             operation = "memory_update"
         else:
             cur = con.execute(
                 """INSERT INTO entries
-                   (scope, type, name, description, content, source_path, created_at, updated_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-                (scope, type_, name, description, content, source_path, ts, ts),
+                   (scope, type, name, description, content, source_path, source_mtime, created_at, updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (scope, type_, name, description, content, source_path, source_mtime, ts, ts),
             )
             entry_id = cur.lastrowid
             operation = "memory_create"
-        _event(con, operation, actor, origin, session_ref, scope, name, entry_id)
-        con.commit()
+        _event(con, operation, actor, origin, session_ref, scope, name, entry_id,
+               outcome="redacted" if redactions else "ok",
+               reason="secret_redacted" if redactions else None,
+               details={"redacted": redactions} if redactions else None)
+        if owns_con:
+            con.commit()
+        if return_meta:
+            return {"id": entry_id, "redacted": redactions}
         return entry_id
     finally:
-        con.close()
+        if owns_con:
+            con.close()
 
 
 def _run_fts_query(con, fts_query, scope, limit):
@@ -389,6 +422,115 @@ def recent(limit=20, scope=None, include_archived=False):
     finally:
         con.close()
     return [dict(r) for r in rows]
+
+
+def list_entries(scope=None, type_=None, archived=False, limit=100):
+    """Browse entries by scope / type / archived state (no search query).
+
+    archived: False = active only (default), True = archived only, None = both.
+    """
+    limit = _clamp_limit(limit)
+    clauses, params = [], []
+    if scope:
+        clauses.append("scope = ?")
+        params.append(scope)
+    if type_:
+        if type_ not in VALID_TYPES:
+            raise ValidationError(f"type must be one of {sorted(VALID_TYPES)}, got {type_!r}")
+        clauses.append("type = ?")
+        params.append(type_)
+    if archived is True:
+        clauses.append("archived_at IS NOT NULL")
+    elif archived is False:
+        clauses.append("archived_at IS NULL")
+    sql = ("SELECT id, scope, type, name, description, updated_at, archived_at "
+           "FROM entries")
+    if clauses:
+        sql += " WHERE " + " AND ".join(clauses)
+    sql += " ORDER BY scope, name LIMIT ?"
+    params.append(limit)
+    con = connect()
+    try:
+        con.row_factory = sqlite3.Row
+        return [dict(r) for r in con.execute(sql, params).fetchall()]
+    finally:
+        con.close()
+
+
+def prune_events(older_than_days=180):
+    """Trim the append-only audit log. Returns the number of rows removed."""
+    con = connect()
+    try:
+        cutoff = datetime.now(timezone.utc).timestamp() - older_than_days * 86400
+        cutoff_iso = datetime.fromtimestamp(cutoff, timezone.utc).isoformat()
+        cur = con.execute("DELETE FROM memory_events WHERE occurred_at < ?", (cutoff_iso,))
+        con.commit()
+        return cur.rowcount
+    finally:
+        con.close()
+
+
+def sync_from_markdown(root=None, redact_section_fn=None, parse_fn=None, verbose=True):
+    """Incremental re-import of a Markdown memory tree.
+
+    Only files whose on-disk mtime is newer than what was last imported
+    (`entries.source_mtime`) are re-read — a routine run that changed nothing
+    touches the database zero times. One transaction for the whole batch.
+
+    `parse_fn(path) -> {name,type,description,content}|None` and
+    `redact_section_fn(text) -> (text, changed)` are injected by import_md.py so
+    this module stays dependency-free and layout-agnostic.
+    """
+    from pathlib import Path as _P
+    root = _P(root) if root else (_P.home() / ".claude" / "projects")
+    if parse_fn is None:
+        raise ValidationError("sync_from_markdown needs a parse_fn")
+    imported = skipped = unchanged = 0
+    con = connect()
+    try:
+        con.row_factory = sqlite3.Row
+        known = {}
+        for r in con.execute("SELECT scope, name, source_mtime FROM entries"):
+            known[(r["scope"], r["name"])] = r["source_mtime"]
+        for project_dir in sorted(p for p in root.iterdir() if p.is_dir()):
+            memory_dir = project_dir / "memory"
+            if not memory_dir.is_dir():
+                continue
+            scope = project_dir.name
+            for md_file in sorted(memory_dir.glob("*.md")):
+                if md_file.name.upper() == "MEMORY.MD":
+                    continue
+                if md_file.name.lower().startswith("credentials"):
+                    skipped += 1
+                    continue
+                parsed = parse_fn(md_file)
+                if not parsed:
+                    skipped += 1
+                    continue
+                mtime = md_file.stat().st_mtime
+                prev = known.get((scope, parsed["name"]))
+                if prev is not None and prev >= mtime:
+                    unchanged += 1
+                    continue
+                content = parsed["content"]
+                if redact_section_fn:
+                    content, _ = redact_section_fn(content)
+                try:
+                    add_entry(scope, parsed["type"], parsed["name"], content,
+                              parsed["description"], source_path=str(md_file),
+                              source_mtime=mtime, actor="sync", origin="terminal",
+                              _con=con)
+                    imported += 1
+                    if verbose:
+                        print(f"  [{scope}] {parsed['name']}", file=sys.stderr)
+                except ValidationError as e:
+                    skipped += 1
+                    if verbose:
+                        print(f"  SKIP ({e}): {md_file}", file=sys.stderr)
+        con.commit()
+    finally:
+        con.close()
+    return {"imported": imported, "unchanged": unchanged, "skipped": skipped}
 
 
 def delete_entry(scope, name):
@@ -644,16 +786,23 @@ def healthcheck(scope=None, actor="system", origin="healthcheck", session_ref=No
         record("archive_restore", False, e)
 
     try:
-        fake_secret = "sk-proj-" + ("A" * 28)
-        try:
-            add_entry(scope, "reference", "guard-probe", fake_secret,
-                      description="probe", actor=actor, origin=origin, session_ref=session_ref)
-            refused = False
-        except ValidationError as e:
-            refused = str(e).startswith("secret_detected")
-        record("secret_guard", refused and get_entry(scope, "guard-probe", include_archived=True) is None)
+        fake_secret = "token before ghp_" + ("A" * 36) + " token after"
+        meta = add_entry(scope, "reference", "guard-probe", fake_secret,
+                         description="probe", actor=actor, origin=origin,
+                         session_ref=session_ref, return_meta=True)
+        stored = get_entry(scope, "guard-probe", include_archived=True)
+        redacted_ok = (
+            "github_token" in meta.get("redacted", [])
+            and stored is not None
+            and "ghp_" not in stored["content"]
+            and "[REDACTED]" in stored["content"]
+            and "token before" in stored["content"]  # surrounding note kept
+        )
+        record("secret_guard_redacts", redacted_ok,
+               f"redacted={meta.get('redacted')}")
+        delete_entry(scope, "guard-probe")
     except Exception as e:
-        record("secret_guard", False, e)
+        record("secret_guard_redacts", False, e)
 
     try:
         deleted = delete_entry(scope, HEALTHCHECK_NAME)
@@ -690,6 +839,16 @@ def main():
     sp.add_argument("--scope", default=None)
     sp.add_argument("--limit", type=int, default=20)
 
+    sp = sub.add_parser("list", help="Browse entries by scope/type/archived (no search query)")
+    sp.add_argument("--scope", default=None)
+    sp.add_argument("--type", default=None, choices=sorted(VALID_TYPES))
+    sp.add_argument("--archived", action="store_true", help="Show archived entries instead of active ones")
+    sp.add_argument("--all", action="store_true", help="Show both active and archived")
+    sp.add_argument("--limit", type=int, default=100)
+
+    sp = sub.add_parser("sync", help="Incremental re-import of ~/.claude/projects/*/memory/*.md (only changed files)")
+    sp.add_argument("--root", default=None)
+
     sp = sub.add_parser("get")
     sp.add_argument("--scope", required=True)
     sp.add_argument("--name", required=True)
@@ -712,6 +871,8 @@ def main():
     sp.add_argument("--scope", default=None)
     sp.add_argument("--name", default=None)
     sp.add_argument("--limit", type=int, default=50)
+    sp.add_argument("--prune-older-than-days", type=int, default=None,
+                    help="Instead of listing, delete audit rows older than N days")
 
     sp = sub.add_parser("backup")
     sp.add_argument("--dest", default=None)
@@ -734,14 +895,35 @@ def main():
     elif args.cmd == "add":
         content = args.content if args.content is not None else sys.stdin.read()
         try:
-            eid = add_entry(
+            meta = add_entry(
                 args.scope, args.type, args.name, content, args.description, args.source_path,
-                args.expected_updated_at, args.actor, args.origin, args.session_ref
+                args.expected_updated_at, args.actor, args.origin, args.session_ref,
+                return_meta=True,
             )
         except ValidationError as e:
             print(json.dumps({"ok": False, "error": str(e)}))
             return 1
-        print(json.dumps({"ok": True, "id": eid}))
+        out = {"ok": True, "id": meta["id"]}
+        if meta["redacted"]:
+            out["redacted"] = meta["redacted"]
+        print(json.dumps(out))
+    elif args.cmd == "list":
+        archived = None if args.all else (True if args.archived else False)
+        try:
+            print(json.dumps(list_entries(args.scope, args.type, archived, args.limit),
+                             ensure_ascii=False, indent=2))
+        except ValidationError as e:
+            print(json.dumps({"ok": False, "error": str(e)}))
+            return 1
+    elif args.cmd == "sync":
+        sys.path.insert(0, str(Path(__file__).parent))
+        import import_md  # noqa
+        result = sync_from_markdown(
+            root=args.root,
+            redact_section_fn=import_md.redact_secrets,
+            parse_fn=import_md.parse_memory_file,
+        )
+        print(json.dumps({"ok": True, **result}, ensure_ascii=False))
     elif args.cmd == "delete":
         try:
             deleted = delete_entry(args.scope, args.name)
@@ -764,7 +946,11 @@ def main():
             print(json.dumps({"ok": False, "error": str(e)}))
             return 1
     elif args.cmd == "events":
-        print(json.dumps(get_events(args.scope, args.name, args.limit), ensure_ascii=False, indent=2))
+        if args.prune_older_than_days is not None:
+            removed = prune_events(args.prune_older_than_days)
+            print(json.dumps({"ok": True, "pruned": removed}))
+        else:
+            print(json.dumps(get_events(args.scope, args.name, args.limit), ensure_ascii=False, indent=2))
     elif args.cmd == "backup":
         dest = backup(args.dest)
         print(json.dumps({"ok": True, "dest": dest}))

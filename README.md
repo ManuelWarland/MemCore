@@ -1,192 +1,263 @@
-# MemCore — mémoire centrale partagée entre IA
+# MemCore
 
-Si tu es une IA (Claude, GPT, Gemini, ou autre) qui vient de découvrir ce fichier : ceci est une base de mémoire persistante appartenant à **Manu**, partagée entre tous les outils/IA qui travaillent avec lui sur cette machine. Elle contient des faits déjà établis sur ses projets, ses préférences, et des décisions déjà prises — **cherche dedans avant de demander une information qui pourrait déjà y être**, et **écris dedans** quand tu apprends quelque chose qui mériterait de survivre à cette conversation.
+> Local, file-based **shared long-term memory** for AI coding assistants.
+> One SQLite file. No daemon, no background capture, no cloud, no telemetry.
 
-- Base de données : `C:\Users\you\MemCore\memcore.db` (SQLite standard, lisible par n'importe quel outil)
-- Scripts : `C:\Users\you\MemCore\scripts\`
+MemCore gives Claude Code, Codex CLI, Kimi Code, OpenCode, AgentRoom — or any tool
+that speaks [MCP](https://modelcontextprotocol.io) or can run a script — a single
+persistent memory: the facts, decisions and preferences that should survive across
+sessions and be searchable by **every** assistant working on the same projects.
 
-## Accès — interfaces contrôlées
+The problem it solves: each AI session starts blank. You re-explain the same
+constraints, the same "we already tried that", the same "no, use X not Y". MemCore
+is where those get written once and found again — by you or by the next assistant.
 
-Pour le roster, l'accès officiel passe par MCP, la CLI ou le pont JSONL local. L'accès SQLite brut reste possible pour la maintenance humaine et la restauration, mais n'est plus une capacité à donner directement à une IA : les interfaces contrôlées appliquent provenance, garde-secrets, conflits d'écriture et archivage réversible.
+---
 
-### 1. MCP (si tu supports le protocole Model Context Protocol)
+## Features
 
-Ajoute ce serveur à ta config MCP (même forme que dans `~/.claude.json` de Claude Code) :
+| | |
+|---|---|
+| **Local & private** | A single `memcore.db` (standard SQLite). Readable by any tool. Nothing leaves the machine. |
+| **Multi-client** | MCP server, CLI, line-delimited JSON bridge, or raw SQLite — all read/write the same store. |
+| **Full-text search** | SQLite FTS5 across every scope. Multi-word queries try strict AND, then fall back to ranked OR — one missing word never zeroes the result. |
+| **Provenance & audit** | Every create / update / conflict / refusal / archive / restore is appended to `memory_events` with actor + origin + optional session id. |
+| **Safe concurrency** | Optimistic locking via `expected_updated_at`. Concurrent writers get a `conflict` — nothing is silently overwritten. |
+| **Reversible deletes** | Archive (soft-delete) → restore. Overwritten versions kept in history. |
+| **Per-connection access control** | `--readonly` and/or `--scope <name>` sandboxing, **enforced server-side** (a locked connection cannot escape its scope even if it asks). |
+| **Secret hygiene** | Markdown import redacts common secret patterns and skips `credentials_*` files by design. |
+| **Zero dependencies** | Python 3.11+ standard library only. No `pip install`. |
+
+---
+
+## Install
+
+```bash
+git clone https://github.com/AngwattRider/MemCore.git
+cd MemCore
+python scripts/memcore.py init          # creates the database
+python scripts/memcore.py healthcheck   # end-to-end self-test (~1s)
+```
+
+**Database location** — defaults to `~/MemCore/memcore.db`. Override with the
+`MEMCORE_DB_PATH` environment variable (point it wherever you like — a synced
+folder, an encrypted volume, a project directory).
+
+`memcore.db` is **git-ignored** — the code is shareable, your memories are not.
+
+---
+
+## Use it — as a human (CLI)
+
+Works everywhere, no MCP support required. Everything prints JSON on stdout.
+
+```bash
+python scripts/memcore.py search "telegram rate limit"
+python scripts/memcore.py recent
+python scripts/memcore.py scopes
+python scripts/memcore.py stats
+
+python scripts/memcore.py add \
+  --scope "my-project" \
+  --type  "feedback" \
+  --name  "prefer-tabs-over-spaces" \
+  --description "One-line summary used for recall ranking" \
+  --content "The full note."
+
+python scripts/memcore.py backup           # consistent copy via SQLite backup API
+python scripts/memcore.py backup --dest /path/to/backups/memcore.db
+```
+
+`type` is one of `user` / `feedback` / `project` / `reference` (see
+[Conventions](#conventions)). Upsert is automatic on `scope` + `name`.
+
+---
+
+## Use it — as an AI assistant (MCP)
+
+Add MemCore as a local MCP server. **The exact config shape differs per host** —
+here are ones verified working:
+
+| Host | Config file | Root key | `command` shape |
+|---|---|---|---|
+| Claude Code | `~/.claude.json` | `mcpServers` | `command` (string) + `args` (array) + `type: "stdio"` |
+| Codex CLI | `~/.codex/config.toml` | `[mcp_servers.memcore]` (TOML) | `command` + `args` |
+| Kimi Code CLI | `~/.kimi-code/mcp.json` | `mcpServers` | same as Claude Code |
+| OpenCode | `~/.config/opencode/opencode.jsonc` | `mcp` (not `mcpServers`) | `command` = **one array** combining interpreter + script, plus `type: "local"` and `enabled: true` |
+
+Claude Code example:
 
 ```json
 {
   "mcpServers": {
     "memcore": {
-      "command": "C:\\Users\\you\\AppData\\Local\\Programs\\Python\\Python313\\python.exe",
-      "args": ["C:\\Users\\you\\MemCore\\scripts\\memcore_mcp.py", "--actor", "claude", "--origin", "terminal"]
+      "type": "stdio",
+      "command": "python",
+      "args": ["/absolute/path/to/MemCore/scripts/memcore_mcp.py",
+               "--actor", "claude", "--origin", "terminal"]
     }
   }
 }
 ```
 
-**Attention — ce JSON est la forme que Claude Code attend, PAS un format universel.** Chaque outil/CLI a son propre fichier de config MCP, sa propre clé racine, et parfois une forme différente pour `command`/`args`. Copier ce bloc tel quel dans un autre outil que Claude Code a de bonnes chances d'échouer silencieusement (le fichier de config a l'air correct mais l'outil ne charge rien). Adapte-le à la syntaxe réelle de ton propre host — voici les configs déjà vérifiées fonctionnelles sur cette machine, à prendre comme référence si tu reconnais ton propre outil ou un format proche :
+> Most CLIs only read their MCP config at startup — **restart the tool** (new
+> session) after editing it before concluding something is broken.
 
-| Outil | Fichier de config | Clé racine | Forme `command` |
-|---|---|---|---|
-| Claude Code | `~/.claude.json` | `mcpServers` | `command` (string) + `args` (array) + `type: "stdio"` |
-| Codex CLI | `~/.codex/config.toml` | `[mcp_servers.memcore]` (TOML, pas JSON) | `command` (string) + `args` (array) |
-| Kimi Code CLI | `~/.kimi-code/mcp.json` | `mcpServers` | `command` (string) + `args` (array), identique à Claude Code |
-| OpenCode | `~/.config/opencode/opencode.jsonc` | `mcp` (PAS `mcpServers`) | `command` = **un seul array combinant** l'exe et le script, + `type: "local"` + `enabled: true` obligatoires |
+### Access profiles (per connection)
 
-Si ton outil n'est dans aucune de ces lignes : cherche dans SA propre documentation comment déclarer un serveur MCP local (souvent "local/stdio MCP server", "custom tool server"), pas dans ce README — chaque host a sa propre syntaxe et ce fichier ne peut pas toutes les connaître à l'avance.
+Set on the connection's own `args`, not globally:
 
-**Redémarrage quasi toujours nécessaire.** La plupart des CLI ne relisent leur config MCP qu'au lancement d'une nouvelle session — ajouter l'entrée MemCore dans la session en cours ne suffit généralement pas. Si `memory_healthcheck` échoue ou si l'outil MCP n'apparaît pas juste après avoir édité le fichier, redémarre complètement l'outil (nouvelle session/nouveau terminal) avant de conclure à un problème de config.
-
-**Contrôle d'accès par connexion, pas par IA.** Chaque client MCP que tu ajoutes obtient sa propre entrée `mcpServers`, et le niveau d'accès se règle via des arguments sur cette entrée précise — pas un réglage global dans MemCore. Ajoute `--readonly` et/ou `--scope <nom>` dans le tableau `args` :
-
-```json
-"args": ["C:\\...\\memcore_mcp.py", "--readonly", "--scope", "collab"]
-```
-
-| Profil | Args | Effet |
+| Profile | Args | Effect |
 |---|---|---|
-| Confiance totale (ex. Claude Code aujourd'hui) | *(aucun)* | Lecture/écriture, tous scopes |
-| Lecture seule | `--readonly` | Voit tout, ne peut rien écraser/supprimer |
-| Bac à sable | `--scope <nom>` | Lecture/écriture limitée à UN scope, même si l'IA demande explicitement un autre |
-| Le plus restrictif | `--readonly --scope <nom>` | Aperçu lecture seule d'un seul scope |
+| Full trust | *(none)* | Read/write, all scopes |
+| Read-only | `--readonly` | Sees everything, cannot overwrite/delete |
+| Sandbox | `--scope <name>` | Read/write limited to one scope, even if another is requested |
+| Most restrictive | `--readonly --scope <name>` | Read-only view of a single scope |
 
-Le verrou de scope est **imposé côté serveur**, pas juste suggéré : même si l'IA connectée demande explicitement un autre scope, la requête est silencieusement redirigée vers le scope autorisé — vérifié par un test qui tente volontairement le contournement (`test_access_profiles.py`). Recommandation par défaut : démarrer toute IA pas encore éprouvée en lecture seule (voire en bac à sable), et ne passer en accès complet qu'après lui avoir fait confiance sur la durée.
+Scope locking is enforced server-side and covered by an adversarial test
+(`scripts/test_access_profiles.py`). Default recommendation: start any unproven
+assistant read-only (or sandboxed), widen only after trust.
 
-Tools exposés (nom, description, paramètres — auto-documentés via le protocole MCP) :
+### MCP tools
 
-| Tool | Paramètres | Usage |
+| Tool | Params | Purpose |
 |---|---|---|
-| `memory_search` | `query`, `scope?`, `limit?`, `debug?` | Recherche full-text à travers TOUS les scopes. Une requête à plusieurs mots essaie d'abord un ET strict (tous les mots dans la même entrée) ; si ça retourne 0 résultat, repli automatique en OU (classé par pertinence) — un seul mot absent mot-pour-mot ne fait plus tomber toute la recherche à zéro (corrigé le 2026-08-13). `debug=true` retourne `{results, mode, and_query, or_query}` au lieu d'une simple liste, pour voir quel mode a matché |
-| `memory_write` | `scope`, `type`, `name`, `content`, `description?`, `expected_updated_at?` | Créer ou mettre à jour ; `expected_updated_at` protège une mise à jour contre les écrasements concurrents |
-| `memory_archive` | `scope`, `name`, `reason` | Archiver réversiblement une entrée (soft-delete) |
-| `memory_restore` | `scope`, `name`, `reason` | Restaurer une entrée archivée |
-| `memory_history` | `scope`, `name`, `limit?` | Versions précédentes d'une entrée écrasée/supprimée |
-| `memory_recent` | `scope?`, `limit?` | Dernières entrées modifiées |
-| `memory_get` | `scope`, `name` | Une entrée précise |
-| `memory_scopes` | — | Liste des scopes existants + nombre d'entrées |
-| `memory_stats` | — | Total d'entrées, chemin de la base |
-| `memory_healthcheck` | — | Auto-test bout en bout (~1s) : écriture/lecture/recherche (mode strict ET puis repli OU)/historique/suppression, sur une entrée jetable qui ne touche jamais tes vraies données. Utilise ceci avant de conclure "MemCore est connecté" — une connexion peut apparaître comme active alors que la recherche se comporte mal silencieusement |
+| `memory_search` | `query`, `scope?`, `limit?`, `debug?` | Full-text search across all scopes (AND→OR fallback). `debug=true` returns the matched mode + raw queries. |
+| `memory_write` | `scope`, `type`, `name`, `content`, `description?`, `expected_updated_at?` | Create or update. Pass `expected_updated_at` to guard against concurrent overwrites. |
+| `memory_get` | `scope`, `name` | One entry. |
+| `memory_recent` | `scope?`, `limit?` | Most recently modified entries. |
+| `memory_history` | `scope`, `name`, `limit?` | Previous versions of an overwritten/deleted entry. |
+| `memory_archive` / `memory_restore` | `scope`, `name`, `reason` | Reversible soft-delete / undelete. |
+| `memory_scopes` | — | Scopes + entry counts. |
+| `memory_stats` | — | Totals + DB path. |
+| `memory_healthcheck` | — | End-to-end self-test on a throwaway entry. Use before trusting a connection — search can misbehave silently while the connection looks up. |
 
-**Écriture sûre** : avant de modifier une entrée existante, appelle `memory_get` puis renvoie son `updated_at` dans `expected_updated_at`. Si une autre IA l'a changée entre-temps, MemCore refuse avec `conflict` et ne perd rien. Une mise à jour sans ce champ reste temporairement acceptée pour compatibilité avec les anciens clients, mais les nouveaux clients du roster doivent l'utiliser.
+**Safe writes**: before updating an existing entry, `memory_get` it and pass its
+`updated_at` back as `expected_updated_at`. If another client changed it meanwhile,
+the write is refused with `conflict` and nothing is lost.
 
-**Provenance** : lance une connexion avec `--actor <claude|codex|kimi|...> --origin <terminal|agentroom>`, et si possible `--session-ref <id>`. Les créations, mises à jour, conflits, refus, archivages et restaurations sont consignés dans la table append-only `memory_events`. L'identité est fixée au lancement du serveur, pas choisie par le modèle à chaque appel.
+**Provenance**: launch with `--actor <name> --origin <terminal|agentroom|...>` and,
+if available, `--session-ref <id>`. Identity is fixed at server start, not chosen
+per call.
 
-### 2. Ligne de commande (si tu peux exécuter des commandes shell sur cette machine)
+---
 
-Fonctionne même sans support MCP — c'est la méthode la plus universelle.
+## For an AI reading this repository for the first time
+
+This is a persistent memory store shared across the AI tools used on this machine.
+It holds established facts, prior decisions and user preferences.
+
+1. **Search before you ask.** `memory_search "<topic>"` (or the CLI). It spans every
+   scope — you don't need to know which one a fact lives in.
+2. **Write what should outlive this conversation** — a corrected assumption, a
+   design decision, a "we already ruled this out". Not conversational noise.
+3. **Don't rewrite an entry that's already present and still correct.**
+4. If a `global`-scope profile exists, read it first (`memory_search "user profile"`,
+   `memory_search "collaboration rules"`) — it's how the person you're working with
+   wants assistants to behave.
+
+---
+
+## Other access methods
+
+### Line-delimited JSON bridge
+
+`scripts/memcore_bridge.py` — one JSON request per line, one JSON response per line.
+For local orchestrators (e.g. AgentRoom). No npm, no raw SQLite.
 
 ```bash
-# Chercher
-python C:\Users\you\MemCore\scripts\memcore.py search "<termes de recherche>"
-
-# Ajouter ou mettre à jour (upsert automatique sur scope+name)
-python C:\Users\you\MemCore\scripts\memcore.py add ^
-  --scope "<nom-du-projet-ou-sujet>" ^
-  --type "<user|feedback|project|reference>" ^
-  --name "<slug-kebab-case-unique-dans-ce-scope>" ^
-  --description "<résumé en une ligne>" ^
-  --content "<contenu complet>"
-
-# Voir les dernières entrées
-python C:\Users\you\MemCore\scripts\memcore.py recent
-
-# Archiver puis restaurer une entrée
-python C:\Users\you\MemCore\scripts\memcore.py --actor codex --origin terminal archive --scope "<scope>" --name "<name>" --reason "<raison>"
-python C:\Users\you\MemCore\scripts\memcore.py --actor codex --origin terminal restore --scope "<scope>" --name "<name>" --reason "<raison>"
-
-# Sauvegarder la base (copie cohérente même en écriture concurrente, via l'API backup SQLite)
-python C:\Users\you\MemCore\scripts\memcore.py backup
-
-# Lister les scopes connus
-python C:\Users\you\MemCore\scripts\memcore.py scopes
-
-# Statistiques
-python C:\Users\you\MemCore\scripts\memcore.py stats
+python scripts/memcore_bridge.py --actor codex --origin agentroom --session-ref "room:1/run:42"
+# stdin:  {"op":"memory_search","query":"deploy steps","limit":5}
 ```
 
-**Validation appliquée à toute écriture** (CLI, MCP, et accès direct si tu passes par `memcore.add_entry`) : `type` doit être `user`/`feedback`/`project`/`reference`, `content` ne peut pas être vide et est plafonné à 200 000 caractères, `scope`/`name`/`description` sont plafonnés à 500 caractères. Une écriture invalide renvoie `{"ok": false, "error": "..."}` plutôt que de corrompre la base.
-
-Tout retourne du JSON sur stdout. Si les accents s'affichent mal dans ton terminal, force l'UTF-8 : `PYTHONUTF8=1 python ...` (ou lis directement le JSON, les données stockées sont toujours correctes).
-
-### 3. Pont JSONL stdio (orchestrateurs locaux)
-
-`scripts\memcore_bridge.py` fournit à AgentRoom et aux orchestrateurs locaux une requête JSON par ligne et une réponse JSON par ligne, sans dépendance npm ni accès SQLite brut. L'identité est liée au processus :
-
-```powershell
-python scripts\memcore_bridge.py --actor codex --origin agentroom --session-ref "room:1/run:42"
-```
-
-Exemple de requête : `{"op":"memory_search","query":"AgentRoom","limit":5}`.
-
-### 4. SQLite direct — maintenance uniquement
-
-Schéma :
+### Raw SQLite — maintenance only
 
 ```sql
 CREATE TABLE entries (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     scope TEXT NOT NULL,
-    type TEXT NOT NULL,           -- 'user' | 'feedback' | 'project' | 'reference'
-    name TEXT NOT NULL,           -- slug unique DANS ce scope
+    type  TEXT NOT NULL,          -- 'user' | 'feedback' | 'project' | 'reference'
+    name  TEXT NOT NULL,          -- slug, unique within its scope
     description TEXT NOT NULL DEFAULT '',
     content TEXT NOT NULL,
-    source_path TEXT,             -- chemin du .md d'origine si migré, sinon NULL
+    source_path TEXT,             -- origin .md path if imported, else NULL
     created_at TEXT NOT NULL,     -- ISO 8601 UTC
     updated_at TEXT NOT NULL,
     UNIQUE(scope, name)
 );
--- Table virtuelle FTS5 'entries_fts' synchronisée automatiquement par triggers.
--- Ne jamais écrire dedans directement — écris dans 'entries', les triggers font le reste.
+-- entries_fts (FTS5) is kept in sync by triggers. Never write to it directly.
 ```
 
-Recherche :
 ```sql
-SELECT e.* FROM entries_fts
-JOIN entries e ON e.id = entries_fts.rowid
-WHERE entries_fts MATCH 'tes termes'
-ORDER BY bm25(entries_fts) LIMIT 20;
+SELECT e.* FROM entries_fts JOIN entries e ON e.id = entries_fts.rowid
+WHERE entries_fts MATCH 'your terms' ORDER BY bm25(entries_fts) LIMIT 20;
 ```
 
-Le SQL direct ci-dessous décrit le stockage historique, mais ne doit plus être utilisé par un agent pour écrire : il contournerait les validations et `memory_events`. Utiliser MCP, CLI ou le pont JSONL.
+Direct SQL bypasses validation and `memory_events` — use MCP / CLI / bridge for
+anything an agent does; keep raw SQL for human maintenance and restoration.
 
-Ancien exemple d'écriture interne :
-```sql
-INSERT INTO entries (scope, type, name, description, content, created_at, updated_at)
-VALUES (?, ?, ?, ?, ?, ?, ?)
-ON CONFLICT(scope, name) DO UPDATE SET
-    description=excluded.description, content=excluded.content, updated_at=excluded.updated_at;
-```
+### Markdown import (optional helpers)
 
-## Restauration (si la base est corrompue / perdue / le MCP ne répond plus)
+`scripts/import_md.py` and `scripts/import_claude_md.py` bulk-import an existing
+tree of Markdown memory files (the layout Claude Code writes under
+`.claude/projects/*/memory/`) and a `CLAUDE.md` profile. Both redact common secret
+patterns and skip `credentials_*` files. Re-runnable — they upsert on `scope` + `name`.
 
-Runbook complet : `E:\vault\3 - UTILITAIRES\MemCore — restauration (runbook).md` (sauvegardé sur GitHub + Backblaze — reste accessible même si ce disque meurt). Résumé :
+---
 
-- **`.db` corrompue, une sauvegarde existe** → fermer les outils, remplacer `C:\Users\you\MemCore\memcore.db` par `E:\vault\_Mémoire Claude Code\_MemCore_Backup\memcore.db` (rafraîchie chaque lundi+vendredi 04h30) ou par un `restic restore` depuis Backblaze, puis `memcore.py healthcheck`.
-- **Plus aucune `.db`, les `.md` sont là** → `python scripts\import_claude_md.py` puis `python scripts\import_md.py` reconstruisent l'index depuis les `.md` natifs (source de vérité). Perd `entries_history` / `memory_events` / soft-deletes / entrées sans miroir `.md` ; le contenu actif revient.
-- **Base saine mais MCP muet** → `memcore.py healthcheck` (si OK = c'est le MCP), redémarrer complètement l'outil, vérifier l'entrée `mcpServers.memcore` de la config ; la CLI (`memcore.py …`) marche sans MCP en attendant.
+## Conventions
 
-Prévention en place : tâche planifiée `Backup vault (hebdo)` (lundi+vendredi 04h30) qui fait `memcore.py backup` + push GitHub + restic B2, avec alerte Telegram si échec.
+- **`scope`** — the project or topic (a project name, or `global` for facts true
+  everywhere). Consistency is nice but not critical: search spans all scopes.
+- **`name`** — short kebab-case slug, unique within its scope. Reuse it to update.
+- **`type`** — `user` (who the person is / their preferences), `feedback` (a lesson
+  or correction they gave), `project` (a fact/state about ongoing work),
+  `reference` (a pointer to something external).
+- Store only what should survive the current conversation.
 
-## Conventions à respecter en écrivant
+Validation on every write: `type` must be valid, `content` non-empty and ≤ 200 000
+chars, `scope`/`name`/`description` ≤ 500 chars. Invalid writes return
+`{"ok": false, "error": "..."}` — the store is never corrupted.
 
-- **`scope`** : identifie le projet ou le sujet (ex. un nom de projet, ou `global` pour un fait valable partout). Cohérence appréciée mais pas critique — la recherche traverse tous les scopes de toute façon.
-- **`name`** : slug court en kebab-case, unique dans son scope. Réutiliser le même `name` pour mettre à jour une entrée existante plutôt que d'en créer une nouvelle en double.
-- **`type`** : `user` (profil/préférences de Manu), `feedback` (une leçon/correction qu'il a donnée), `project` (un fait/état sur un projet en cours), `reference` (un pointeur vers une info externe).
-- N'écris que ce qui mérite de survivre à la conversation en cours — pas de bruit conversationnel, pas de détails éphémères.
-- Une entrée déjà présente et toujours correcte n'a pas besoin d'être réécrite juste parce que tu l'as lue.
+---
 
-## Scope `global` — qui est Manu, comment travailler avec lui
+## What is NOT stored (security)
 
-Le scope `global` contient `~/.claude/CLAUDE.md` importé section par section (`scripts/import_claude_md.py`, ré-exécutable à tout moment si CLAUDE.md change). C'est le profil complet de Manu (identité, contexte personnel, préférences techniques) et ses règles de collaboration permanentes — normalement chargées automatiquement par Claude Code/Desktop via leur propre mécanisme, mais invisibles pour toute autre IA (Codex CLI, etc.) sauf via MemCore. **Si tu es une IA qui vient de se connecter, lis `memory_search "profil de manu"` et `memory_search "regles de collaboration"` avant toute autre interaction avec lui.**
+Files named `credentials_*.md` in a Markdown import tree are **deliberately
+excluded**. Secrets don't belong in a store whose purpose is to be queried by
+several AI tools. If an assistant needs a credential, it should ask the user
+directly — not look here.
 
-## Sécurité — ce qui N'EST PAS dans cette base
+---
 
-Les fichiers `credentials_*.md` de la mémoire native (identifiants live — tokens API, mots de passe) sont **volontairement exclus** de l'import vers MemCore. Ils restent uniquement dans `C:\Users\you\.claude\projects\*\memory\`, protégés par les mêmes permissions NTFS (accès limité au compte Windows de Manu), mais pas dupliqués dans une base dont le but explicite est d'être interrogeable par plusieurs IA. Ne cherche pas de secrets ici — s'ils te sont nécessaires, demande-les directement à Manu.
+## Backup & restore
 
-## Vault Obsidian de Manu
+`python scripts/memcore.py backup [--dest PATH]` makes a consistent copy (SQLite
+backup API — safe even under concurrent writes). Point `--dest` (or
+`MEMCORE_BACKUP_PATH`) into a folder that is itself backed up.
 
-Manu a aussi un vault Obsidian à `E:\vault` (renommé le 2026-08-12, anciennement `E:\vault-old` — si tu vois encore l'ancien chemin quelque part, il est périmé), avec son propre point d'entrée pour les IA : `E:\vault\index.md`. Si tu as un accès fichier à ce dossier (plugin Obsidian, accès disque), lis-le aussi — il contient les règles de collaboration condensées et pointe vers `_Mémoire Claude Code\_global_CLAUDE.md` pour le détail complet. Complémentaire à MemCore, pas redondant : ce fichier README est le point d'entrée pour un accès MCP/CLI/SQLite sans forcément voir le vault.
+Restore, worst case first:
 
-## Contexte (pourquoi cet outil existe)
+- **DB corrupt, a backup copy exists** → stop every tool using MemCore, replace
+  `memcore.db` with the backup, run `memcore.py healthcheck`.
+- **No DB, but the source `.md` files exist** → `import_claude_md.py` then
+  `import_md.py` rebuild the index. Lost in this case: `memory_history`,
+  `memory_events`, archived entries — the live content of every entry that has a
+  `.md` comes back.
+- **DB fine, MCP silent** → `memcore.py healthcheck` (if `ok`, it's the MCP layer):
+  fully restart the host, check its `mcpServers.memcore` entry. The CLI works
+  without MCP in the meantime.
 
-Construit par Claude (Claude Code) le 2026-08-07 pour remplacer un outil tiers (claude-mem) qui s'est révélé cassé de façon non réparable sous Windows. Conçu pour être simple et robuste plutôt que riche en fonctionnalités : pas de daemon, pas de capture automatique en arrière-plan, pas de résumé IA obligatoire — juste du stockage + recherche fiables. Des fichiers `.md` lisibles existent aussi en parallèle sous `C:\Users\you\.claude\projects\*\memory\` (mémoire native de Claude Code) ; MemCore en est un miroir indexé plus rapide et plus largement accessible, pas un remplacement exclusif.
+---
+
+## Design notes
+
+No daemon. No automatic background capture. No mandatory AI summarization. Just
+reliable storage + search, plus the guardrails (provenance, concurrency,
+reversible deletes, access control) that make it safe for several assistants to
+share one store. Markdown files can live alongside it as the human-readable
+source of truth; MemCore is a faster, more widely reachable index of them.
+
+## License
+
+[MIT](LICENSE)

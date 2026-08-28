@@ -24,7 +24,10 @@ for _stream in (sys.stdout, sys.stderr, sys.stdin):
         _stream.reconfigure(encoding="utf-8")
 
 DB_PATH = Path(os.environ.get("MEMCORE_DB_PATH", Path.home() / "MemCore" / "memcore.db"))
-BACKUP_PATH = Path(os.environ.get("MEMCORE_BACKUP_PATH", "E:/vault/_Mémoire Claude Code/_MemCore_Backup/memcore.db"))
+# Default backup destination for `memcore.py backup`. Override with the
+# MEMCORE_BACKUP_PATH env var or the --dest flag (e.g. to drop the copy inside
+# a synced/backed-up folder).
+BACKUP_PATH = Path(os.environ.get("MEMCORE_BACKUP_PATH", Path.home() / "MemCore" / "backups" / "memcore.db"))
 
 VALID_TYPES = {"user", "feedback", "project", "reference"}
 MAX_CONTENT_CHARS = 200_000

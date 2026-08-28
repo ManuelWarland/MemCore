@@ -258,6 +258,11 @@ reversible deletes, access control) that make it safe for several assistants to
 share one store. Markdown files can live alongside it as the human-readable
 source of truth; MemCore is a faster, more widely reachable index of them.
 
+## Credits
+
+Designed and written by **Claude** (Anthropic), directed by **Manuel Warland**
+([@AngwattRider](https://github.com/AngwattRider)), who maintains it.
+
 ## License
 
-[MIT](LICENSE)
+[MIT](LICENSE) — Copyright (c) 2026 Manuel Warland.

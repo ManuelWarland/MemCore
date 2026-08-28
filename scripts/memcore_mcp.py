@@ -17,6 +17,7 @@ you haven't decided to fully trust yet.
 """
 
 import argparse
+import sqlite3
 import sys
 from pathlib import Path
 
@@ -189,6 +190,10 @@ if not READONLY:
             )
         except memcore.ValidationError as e:
             return {"ok": False, "error": str(e)}
+        except sqlite3.OperationalError as e:
+            # e.g. "database is locked" — another writer (a `sync` run) held the
+            # lock past busy_timeout. Retryable; don't crash the tool call.
+            return {"ok": False, "error": f"db_busy: {e} — retry"}
         out = {"ok": True, "id": meta["id"]}
         if meta["redacted"]:
             out["redacted"] = meta["redacted"]  # secret-shaped values were stripped before storing

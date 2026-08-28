@@ -48,18 +48,39 @@ class ConflictError(ValidationError):
 # costs) tripped a name-based check. Now: strip the value, keep the note, flag
 # it. `credentials_*.md` files stay excluded from import by filename (see the
 # importers) — that convention is unchanged.
+_SECRET_LABEL = (r"api[_ -]?key|access[_ -]?token|refresh[_ -]?token|client[_ -]?secret"
+                 r"|secret[_ -]?key|auth[_ -]?token|bearer|password|passwd|pwd"
+                 r"|mot[_ -]?de[_ -]?passe|psk")
+
 SECRET_CONTENT_PATTERNS = [
-    ("private_key", re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----.*?-----END [A-Z ]*PRIVATE KEY-----", re.DOTALL)),
+    # Private key: from BEGIN to the -----END----- marker, or to a blank line,
+    # or to end of text if truncated — so a pasted key body is stripped even
+    # without its footer, without eating unrelated paragraphs after it.
+    ("private_key", re.compile(r"-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----.*?(?:-----END [A-Z0-9 ]*PRIVATE KEY-----|\n[^\S\r\n]*\n|\Z)", re.DOTALL)),
     ("github_token", re.compile(r"\b(?:gh[pousr]_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{30,})\b")),
     ("aws_key", re.compile(r"\bAKIA[0-9A-Z]{16}\b")),
-    ("openai_anthropic_key", re.compile(r"\bsk-(?:ant-|proj-)?[A-Za-z0-9_-]{24,}\b")),
+    ("openai_anthropic_key", re.compile(r"\bsk-(?:ant-|proj-|svcacct-)?[A-Za-z0-9_-]{32,}\b")),
     ("google_key", re.compile(r"\bAIza[0-9A-Za-z_-]{35}\b")),
-    ("telegram_token", re.compile(r"\b\d{8,10}:AA[A-Za-z0-9_-]{30,}\b")),
+    ("slack_token", re.compile(r"\bxox[baprs]-[0-9A-Za-z-]{10,}\b")),
+    ("telegram_token", re.compile(r"\b\d{8,10}:[A-Za-z0-9_-]{30,}\b")),
     ("jwt", re.compile(r"\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b")),
-    # label (anywhere on a line) + separator + a value that actually looks
-    # secret-ish (12+ chars, at least one digit — cuts "password: required").
-    ("labelled_secret", re.compile(r"(?i)((?:api[_ -]?key|access[_ -]?token|refresh[_ -]?token|client[_ -]?secret|secret[_ -]?key|bearer|password|passwd|mot[_ -]?de[_ -]?passe|psk)[^\S\r\n]*[:=][^\S\r\n]*['\"`]?)(?=[^\s<>{}\[\]'\"`]*\d)[^\s<>{}\[\]'\"`]{12,}(['\"`]?)")),
+    ("conn_string", re.compile(r"\b[a-z][a-z0-9+.-]*://[^\s/:@]+:[^\s/@]{4,}@")),  # scheme://user:pass@host
+    ("auth_header", re.compile(r"(?i)(?:authorization|proxy-authorization)[^\S\r\n]*:[^\S\r\n]*(?:bearer|basic|token)[^\S\r\n]+[A-Za-z0-9._~+/=-]{12,}")),
+    # A whole line whose sole payload after "<label>:" is one 8+ char token
+    # with no path/URL separator — digit NOT required (diceware/word passwords,
+    # wifi keys). The no-slash rule keeps "api_key = docs/where/it.md" pointers.
+    ("labelled_secret_line", re.compile(
+        r"(?im)^([^\S\r\n]*(?:" + _SECRET_LABEL + r")[^\S\r\n]*[:=][^\S\r\n]*['\"`]?)"
+        r"[^\s/\\]{8,}(['\"`]?)[^\S\r\n]*$")),
+    # Same label mid-line: stricter (12+ chars, contains a digit, no path/URL
+    # chars) — cuts "password: chapter-3-of-the-manual" style false positives.
+    ("labelled_secret_inline", re.compile(
+        r"(?i)((?:" + _SECRET_LABEL + r")[^\S\r\n]*[:=][^\S\r\n]*['\"`]?)"
+        r"(?=[^\s<>{}\[\]'\"`/]*\d)[^\s<>{}\[\]'\"`/]{12,}(['\"`]?)")),
 ]
+
+
+_LABELLED_CODES = {"labelled_secret_line", "labelled_secret_inline"}
 
 
 def redact_secrets(text):
@@ -67,7 +88,7 @@ def redact_secrets(text):
     text = str(text)
     codes = []
     for code, pattern in SECRET_CONTENT_PATTERNS:
-        repl = r"\1[REDACTED]\2" if code == "labelled_secret" else "[REDACTED]"
+        repl = r"\1[REDACTED]\2" if code in _LABELLED_CODES else "[REDACTED]"
         text, n = pattern.subn(repl, text)
         if n:
             codes.append(code)
@@ -189,10 +210,15 @@ END;
 """
 
 
-SCHEMA_VERSION = 2  # bump when adding a migration step below
+SCHEMA_VERSION = 2  # bump + add a step in _migrate() when the schema changes
 
 
 def _migrate(con):
+    """Bring the DB schema up to SCHEMA_VERSION. Idempotent; gated on
+    PRAGMA user_version so it does no work on an already-current DB."""
+    if con.execute("PRAGMA user_version").fetchone()[0] >= SCHEMA_VERSION:
+        return
+
     columns = {row[1] for row in con.execute("PRAGMA table_info(entries)")}
     for column, declaration in (
         ("archived_at", "TEXT"),
@@ -458,14 +484,20 @@ def list_entries(scope=None, type_=None, archived=False, limit=100):
 
 
 def prune_events(older_than_days=180):
-    """Trim the append-only audit log. Returns the number of rows removed."""
+    """Trim the append-only audit log. Returns the number of rows removed.
+    Refuses a window under 30 days, and records the prune itself as an event."""
+    if older_than_days < 30:
+        raise ValidationError("prune window must be at least 30 days")
     con = connect()
     try:
         cutoff = datetime.now(timezone.utc).timestamp() - older_than_days * 86400
         cutoff_iso = datetime.fromtimestamp(cutoff, timezone.utc).isoformat()
         cur = con.execute("DELETE FROM memory_events WHERE occurred_at < ?", (cutoff_iso,))
+        removed = cur.rowcount
+        _event(con, "events_pruned", "cli", "terminal", outcome="ok",
+               details={"removed": removed, "older_than_days": older_than_days})
         con.commit()
-        return cur.rowcount
+        return removed
     finally:
         con.close()
 
@@ -473,9 +505,11 @@ def prune_events(older_than_days=180):
 def sync_from_markdown(root=None, redact_section_fn=None, parse_fn=None, verbose=True):
     """Incremental re-import of a Markdown memory tree.
 
-    Only files whose on-disk mtime is newer than what was last imported
-    (`entries.source_mtime`) are re-read — a routine run that changed nothing
-    touches the database zero times. One transaction for the whole batch.
+    Only files whose recorded mtime (`entries.source_mtime`) differs from the
+    on-disk mtime are re-read — and even then, if the (redacted) content is
+    byte-identical to what's stored, only the mtime marker is bumped (no FTS
+    churn, no event). A routine run that changed nothing touches no rows.
+    Commits in chunks so a long run doesn't hold one write lock the whole time.
 
     `parse_fn(path) -> {name,type,description,content}|None` and
     `redact_section_fn(text) -> (text, changed)` are injected by import_md.py so
@@ -485,13 +519,17 @@ def sync_from_markdown(root=None, redact_section_fn=None, parse_fn=None, verbose
     root = _P(root) if root else (_P.home() / ".claude" / "projects")
     if parse_fn is None:
         raise ValidationError("sync_from_markdown needs a parse_fn")
-    imported = skipped = unchanged = 0
+    if not root.is_dir():
+        return {"ok": False, "error": f"root not found: {root}",
+                "imported": 0, "unchanged": 0, "skipped": 0}
+    imported = skipped = unchanged = touched = 0
+    pending = 0
     con = connect()
     try:
         con.row_factory = sqlite3.Row
         known = {}
-        for r in con.execute("SELECT scope, name, source_mtime FROM entries"):
-            known[(r["scope"], r["name"])] = r["source_mtime"]
+        for r in con.execute("SELECT scope, name, source_mtime, content FROM entries"):
+            known[(r["scope"], r["name"])] = (r["source_mtime"], r["content"])
         for project_dir in sorted(p for p in root.iterdir() if p.is_dir()):
             memory_dir = project_dir / "memory"
             if not memory_dir.is_dir():
@@ -509,28 +547,44 @@ def sync_from_markdown(root=None, redact_section_fn=None, parse_fn=None, verbose
                     continue
                 mtime = md_file.stat().st_mtime
                 prev = known.get((scope, parsed["name"]))
-                if prev is not None and prev >= mtime:
+                # == not >= : re-import on any mtime difference (covers a file
+                # restored from a mtime-preserving backup, or a clock that went
+                # backwards) instead of trusting "newer wins".
+                if prev is not None and prev[0] == mtime:
                     unchanged += 1
                     continue
                 content = parsed["content"]
                 if redact_section_fn:
                     content, _ = redact_section_fn(content)
-                try:
-                    add_entry(scope, parsed["type"], parsed["name"], content,
-                              parsed["description"], source_path=str(md_file),
-                              source_mtime=mtime, actor="sync", origin="terminal",
-                              _con=con)
-                    imported += 1
-                    if verbose:
-                        print(f"  [{scope}] {parsed['name']}", file=sys.stderr)
-                except ValidationError as e:
-                    skipped += 1
-                    if verbose:
-                        print(f"  SKIP ({e}): {md_file}", file=sys.stderr)
+                content, _ = redact_secrets(content)
+                if prev is not None and prev[1] == content:
+                    # Content unchanged, only the mtime moved -> just record it.
+                    con.execute("UPDATE entries SET source_mtime=? WHERE scope=? AND name=?",
+                                (mtime, scope, parsed["name"]))
+                    touched += 1
+                    pending += 1
+                else:
+                    try:
+                        add_entry(scope, parsed["type"], parsed["name"], content,
+                                  parsed["description"], source_path=str(md_file),
+                                  source_mtime=mtime, actor="sync", origin="terminal",
+                                  _con=con)
+                        imported += 1
+                        pending += 1
+                        if verbose:
+                            print(f"  [{scope}] {parsed['name']}", file=sys.stderr)
+                    except ValidationError as e:
+                        skipped += 1
+                        if verbose:
+                            print(f"  SKIP ({e}): {md_file}", file=sys.stderr)
+                if pending >= 25:
+                    con.commit()
+                    pending = 0
         con.commit()
     finally:
         con.close()
-    return {"imported": imported, "unchanged": unchanged, "skipped": skipped}
+    return {"ok": True, "imported": imported, "mtime_only": touched,
+            "unchanged": unchanged, "skipped": skipped}
 
 
 def delete_entry(scope, name):
@@ -786,20 +840,26 @@ def healthcheck(scope=None, actor="system", origin="healthcheck", session_ref=No
         record("archive_restore", False, e)
 
     try:
-        fake_secret = "token before ghp_" + ("A" * 36) + " token after"
-        meta = add_entry(scope, "reference", "guard-probe", fake_secret,
+        probe = (
+            "note avant ghp_" + ("A" * 36) + " et\n"
+            "password: PhrasePasseSansAucunChiffre\n"
+            "-----BEGIN OPENSSH PRIVATE KEY-----\n" + ("b64line" * 8) + "\n\n"
+            "fin de note"
+        )
+        meta = add_entry(scope, "reference", "guard-probe", probe,
                          description="probe", actor=actor, origin=origin,
                          session_ref=session_ref, return_meta=True)
         stored = get_entry(scope, "guard-probe", include_archived=True)
+        c = stored["content"] if stored else ""
+        codes = set(meta.get("redacted", []))
         redacted_ok = (
-            "github_token" in meta.get("redacted", [])
-            and stored is not None
-            and "ghp_" not in stored["content"]
-            and "[REDACTED]" in stored["content"]
-            and "token before" in stored["content"]  # surrounding note kept
+            {"github_token", "labelled_secret_line", "private_key"} <= codes
+            and "ghp_" not in c
+            and "PhrasePasseSansAucunChiffre" not in c   # digit-free value still caught
+            and "b64lineb64line" not in c                # key body stripped even without -----END-----
+            and "note avant" in c and "fin de note" in c  # surrounding text kept
         )
-        record("secret_guard_redacts", redacted_ok,
-               f"redacted={meta.get('redacted')}")
+        record("secret_guard_redacts", redacted_ok, f"redacted={sorted(codes)}")
         delete_entry(scope, "guard-probe")
     except Exception as e:
         record("secret_guard_redacts", False, e)
@@ -923,7 +983,8 @@ def main():
             redact_section_fn=import_md.redact_secrets,
             parse_fn=import_md.parse_memory_file,
         )
-        print(json.dumps({"ok": True, **result}, ensure_ascii=False))
+        print(json.dumps(result, ensure_ascii=False))
+        return 0 if result.get("ok") else 1
     elif args.cmd == "delete":
         try:
             deleted = delete_entry(args.scope, args.name)
@@ -947,7 +1008,11 @@ def main():
             return 1
     elif args.cmd == "events":
         if args.prune_older_than_days is not None:
-            removed = prune_events(args.prune_older_than_days)
+            try:
+                removed = prune_events(args.prune_older_than_days)
+            except ValidationError as e:
+                print(json.dumps({"ok": False, "error": str(e)}))
+                return 1
             print(json.dumps({"ok": True, "pruned": removed}))
         else:
             print(json.dumps(get_events(args.scope, args.name, args.limit), ensure_ascii=False, indent=2))

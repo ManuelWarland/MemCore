@@ -235,12 +235,14 @@ Two layers:
 1. **`credentials_*.md` files** in a Markdown import tree are **excluded by
    filename** — never imported.
 2. **Everything else is redacted, not rejected.** On any write, secret-shaped
-   substrings (private keys, `ghp_…` / `github_pat_…`, `AKIA…`, `sk-…` /
-   `sk-ant-…`, `AIza…`, Telegram bot tokens, JWTs, `password: <value>` /
-   `api_key = <value>` lines) are replaced with `[REDACTED]`. The surrounding
-   note is kept, the redaction is returned to the caller (`"redacted": [...]`)
-   and logged to `memory_events`. A note that merely *discusses* a secret format
-   is fine; a real leaked value is stripped before it hits disk.
+   substrings are replaced with `[REDACTED]`: private keys (even a truncated
+   paste), `ghp_…` / `github_pat_…`, `AKIA…`, `sk-…` / `sk-ant-…`, `AIza…`,
+   `xox[baprs]-…`, Telegram bot tokens, JWTs, `scheme://user:pass@host`
+   connection strings, `Authorization: Bearer …` headers, and `password:` /
+   `api_key =` lines (a lone value, no path/URL). The surrounding note is kept,
+   the redaction is returned to the caller (`"redacted": [codes]`) and logged to
+   `memory_events`. A note that merely *discusses* a secret format is fine; a
+   real leaked value is stripped before it hits disk.
 
 If an assistant needs an actual credential, it should ask the user — not look here.
 

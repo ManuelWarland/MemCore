@@ -101,14 +101,23 @@ def main():
             parsed["content"], was_redacted = redact_secrets(parsed["content"])
             if was_redacted:
                 print(f"  REDACTED secret(s) in: {md_file}", file=sys.stderr)
-            memcore.add_entry(
-                scope=scope,
-                type_=parsed["type"],
-                name=parsed["name"],
-                content=parsed["content"],
-                description=parsed["description"],
-                source_path=str(md_file),
-            )
+            try:
+                memcore.add_entry(
+                    scope=scope,
+                    type_=parsed["type"],
+                    name=parsed["name"],
+                    content=parsed["content"],
+                    description=parsed["description"],
+                    source_path=str(md_file),
+                )
+            except memcore.ValidationError as e:
+                # A single file that trips a validation rule (secret guard,
+                # length cap, ...) must NOT abort the whole re-import — skip it,
+                # keep going. Common false positive: a note that legitimately
+                # *discusses* secret formats.
+                skipped += 1
+                print(f"  SKIP ({e}): {md_file}", file=sys.stderr)
+                continue
             imported += 1
             print(f"  [{scope}] {parsed['name']}")
 

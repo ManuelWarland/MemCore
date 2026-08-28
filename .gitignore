@@ -1,0 +1,29 @@
+# ── Données personnelles — JAMAIS dans le repo ──────────────────────────────
+# La base contient les mémoires privées de Manu. Le code est partageable,
+# les données non. `python scripts/memcore.py init` crée une base vierge.
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+memcore-*.db
+
+# ── Python ─────────────────────────────────────────────────────────────────
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+.pytest_cache/
+
+# ── Rebuts OS / éditeurs ───────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+desktop.ini
+*.tmp
+*.bak
+
+# ── Config locale éventuelle ───────────────────────────────────────────────
+.env
+.env.*
+*.local

@@ -9,6 +9,7 @@ one giant blob.
 Idempotent: re-run any time CLAUDE.md changes.
 """
 
+import os
 import re
 import sys
 import unicodedata
@@ -17,10 +18,12 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 import memcore  # noqa: E402
 
-CLAUDE_MD_PATH = Path.home() / ".claude" / "CLAUDE.md"
+CLAUDE_MD_PATH = Path(os.environ.get("MEMCORE_CLAUDE_MD", Path.home() / ".claude" / "CLAUDE.md"))
 SCOPE = "global"
 
 SECTION_RE = re.compile(r"^#{1,2}\s+(.+?)\s*$", re.MULTILINE)
+# Headings that describe the person rather than a rule -> stored as type "user".
+PROFILE_HEADING_RE = re.compile(r"profil|profile|about (the |you|me)|who (you|i)|identit", re.I)
 
 
 def slugify(text):
@@ -54,7 +57,7 @@ def main():
     for heading, body in sections:
         if not body:
             continue
-        type_ = "user" if "profil de manu" in heading.lower() else "feedback"
+        type_ = "user" if PROFILE_HEADING_RE.search(heading) else "feedback"
         name = "claude-md-" + slugify(heading)
         memcore.add_entry(
             scope=SCOPE,

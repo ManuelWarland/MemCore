@@ -1,6 +1,6 @@
-# ── Données personnelles — JAMAIS dans le repo ──────────────────────────────
-# La base contient les mémoires privées de Manu. Le code est partageable,
-# les données non. `python scripts/memcore.py init` crée une base vierge.
+# ── Personal data — NEVER in the repo ──────────────────────────────────────
+# The database holds private memories. The code is shareable, the data is not.
+# `python scripts/memcore.py init` creates an empty one.
 *.db
 *.db-wal
 *.db-shm

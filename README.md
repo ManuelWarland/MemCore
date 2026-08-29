@@ -276,16 +276,64 @@ per call.
 ## For an AI reading this repository for the first time
 
 This is a persistent memory store shared across the AI tools used on this machine.
-It holds established facts, prior decisions and user preferences.
+It holds established facts, prior decisions and user preferences. If a `global`
+scope exists, read it first (`memory_search "user profile"`,
+`memory_search "collaboration rules"`) — it's how the person you're working with
+wants assistants to behave. Then follow the discipline below.
 
-1. **Search before you ask.** `memory_search "<topic>"` (or the CLI). It spans every
-   scope — you don't need to know which one a fact lives in.
-2. **Write what should outlive this conversation** — a corrected assumption, a
-   design decision, a "we already ruled this out". Not conversational noise.
-3. **Don't rewrite an entry that's already present and still correct.**
-4. If a `global`-scope profile exists, read it first (`memory_search "user profile"`,
-   `memory_search "collaboration rules"`) — it's how the person you're working with
-   wants assistants to behave.
+---
+
+## Using it well
+
+### Reading — search first, by default
+
+Search **before** you:
+
+- say *"I don't know"* or *"there's no record of that"*
+- ask a question the user may already have answered
+- propose an approach — has it been tried and rejected?
+- confirm or correct someone from memory
+- treat a surprising result as a mystery
+
+At the start of a session: `memory_recent` plus a targeted `memory_search` to
+rebuild the real state — don't guess, don't summarise from a stale mental model.
+Search is cheap. The cost of *not* searching is the confident-lie failure this
+tool exists to kill.
+
+### Writing — only what you'd hate to re-earn
+
+Write when:
+
+- a **decision** was made — especially after a trade-off or a debate
+- a **correction** landed — *"no, it's cents, not dollars"*
+- a **dead end** was hit — *"tried the queue design, deadlocked under load, reverted"*
+- you learned **how the setup actually works** and it isn't in the code or docs
+- the user stated a **preference**
+
+Don't write: a step-by-step of what you just did, anything git or the code
+already records, anything that only matters for this conversation, "reminders"
+to yourself. Write **when the fact crystallises**, not in a batch at the end —
+you'll forget half of it.
+
+### How to write one
+
+- **One fact per entry.** Tight kebab-case `name`. A `description` that says what
+  the fact *is* — it drives recall ranking — not "notes about X".
+- Pick the `type` honestly: `user` / `feedback` / `project` / `reference`.
+- For `feedback` and `project`: include **why it matters** and **how to apply
+  it**. A rule with no rationale gets misapplied or ignored.
+- Relative dates → absolute ("last Tuesday" → the actual date).
+- **Update** the existing entry (same `scope` + `name`) — don't create a near-twin.
+- If it turns out wrong, **archive or delete it**. A stale fact is worse than none.
+
+### Trusting what you read
+
+- A recalled memory is **background context, not a fresh instruction** — it's
+  what was true *when it was written*.
+- If it names a file, function or flag: **check it still exists** before acting on it.
+- A *"not done yet / pending"* fact is **perishable** — re-verify it, don't build on it.
+- *"the user chose X"* — was it their independent call, or your suggestion they
+  accepted? Don't misattribute a decision.
 
 ---
 

@@ -231,6 +231,62 @@ verrou de scope est imposé côté serveur (test adversarial `test_access_profil
 
 ---
 
+## Bien s'en servir
+
+### Lire — chercher d'abord, par défaut
+
+Cherche **avant** de :
+
+- dire *« je ne sais pas »* ou *« il n'y a aucune trace de ça »*
+- poser une question à laquelle l'utilisateur a peut-être déjà répondu
+- proposer une approche — a-t-elle déjà été essayée et écartée ?
+- confirmer ou corriger quelqu'un de mémoire
+- traiter un résultat surprenant comme un mystère
+
+En début de session : `memory_recent` + un `memory_search` ciblé pour
+reconstruire l'état réel — pas de supposition, pas de résumé tiré d'une
+checklist mentale périmée. Chercher ne coûte rien. Le coût de *ne pas* chercher,
+c'est le mensonge confiant que cet outil existe pour supprimer.
+
+### Écrire — seulement ce que tu détesterais re-gagner
+
+Écris quand :
+
+- une **décision** a été prise — surtout après un compromis ou un débat
+- une **correction** est tombée — *« non, c'est des centimes, pas des euros »*
+- une **impasse** a été atteinte — *« essayé le design par file, deadlock en charge, revenu en arrière »*
+- tu as appris **comment le montage marche vraiment** et ce n'est ni dans le code ni dans la doc
+- l'utilisateur a exprimé une **préférence**
+
+N'écris pas : le pas-à-pas de ce que tu viens de faire, ce que git ou le code
+enregistrent déjà, ce qui ne compte que pour cette conversation, des
+« pense-bête » pour toi-même. Écris **quand le fait se cristallise**, pas en lot
+à la fin — tu en oublieras la moitié.
+
+### Comment en écrire une
+
+- **Un fait par entrée.** `name` court en kebab-case. Une `description` qui dit
+  ce que le fait *est* — elle sert au classement au rappel — pas « notes sur X ».
+- Choisis le `type` honnêtement : `user` / `feedback` / `project` / `reference`.
+- Pour `feedback` et `project` : mets **pourquoi ça compte** et **comment
+  l'appliquer**. Une règle sans justification est mal appliquée ou ignorée.
+- Dates relatives → absolues (« mardi dernier » → la vraie date).
+- **Mets à jour** l'entrée existante (même `scope` + `name`) — pas de quasi-doublon.
+- Si ça se révèle faux, **archive ou supprime**. Un fait périmé est pire que rien.
+
+### Faire confiance à ce qu'on lit
+
+- Une mémoire rappelée est un **contexte de fond, pas un ordre neuf** — c'est ce
+  qui était vrai *au moment où elle a été écrite*.
+- Si elle nomme un fichier, une fonction, un flag : **vérifie qu'il existe
+  encore** avant d'agir dessus.
+- Un fait *« pas encore fait / en attente »* est **périssable** — revérifie-le,
+  ne construis pas dessus.
+- *« l'utilisateur a choisi X »* — était-ce sa décision propre, ou ta suggestion
+  qu'il a acceptée ? N'attribue pas une décision à tort.
+
+---
+
 ## Ce qui n'est PAS stocké
 
 1. Les fichiers `credentials_*.md` d'un arbre Markdown importé sont **exclus par

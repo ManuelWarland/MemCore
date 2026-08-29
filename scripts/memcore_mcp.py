@@ -65,32 +65,42 @@ def _effective_scope(requested):
 
 
 @server.tool()
-def memory_search(query: str, scope: str | None = None, limit: int = 20, debug: bool = False):
-    """Full-text search across all remembered facts, across every project scope.
+def memory_search(query: str, scope: str | None = None, limit: int = 20,
+                  debug: bool = False, semantic: bool | None = None):
+    """Search all remembered facts, across every project scope.
 
     Use this before assuming something isn't known — it searches EVERY project
     scope at once (no need to guess which project a fact was recorded under).
 
-    A multi-word query first tries to match ALL terms in the same entry
-    (precise). If that finds nothing, it automatically retries matching ANY
-    of the terms, ranked so entries hitting more terms surface first — so a
-    long natural-language query won't silently return empty just because
-    one word (an accent variant, a compound, a technical token) isn't a
-    verbatim match anywhere. If this STILL returns nothing, retry once with
-    2-3 simple keywords before concluding the info isn't recorded.
+    Two layers, blended by default:
+    - Lexical (FTS5): multi-word queries first require ALL terms in one entry,
+      then fall back to ANY term (ranked by how many match) so one non-verbatim
+      word doesn't zero the result.
+    - Semantic (if embeddings are present): vector nearest-neighbours on a
+      multilingual sentence model — finds entries about the same idea even with
+      no shared keywords.
 
     Args:
-        query: Search terms (French or English, partial words work).
-        scope: Optional — restrict to one project scope (e.g. a project folder name).
-        limit: Max results to return.
-        debug: If true, returns {results, mode, and_query, or_query} instead
-            of a bare list — use to see whether the strict or fallback mode
-            matched, and the raw FTS queries that were run.
+        query: Search terms or a natural-language question (FR or EN).
+        scope: Optional — restrict to one project scope.
+        limit: Max results.
+        debug: If true, returns {results, mode, ...} — `mode` tells you which
+            path matched (and / or_fallback / hybrid / vector / lexical).
+        semantic: None = hybrid (default), True = vector only, False = lexical only.
     """
     try:
-        return memcore.search(query, scope=_effective_scope(scope), limit=limit, debug=debug)
+        return memcore.search(query, scope=_effective_scope(scope), limit=limit,
+                              debug=debug, semantic=semantic)
     except memcore.ValidationError:
         return [] if not debug else {"results": [], "mode": None, "and_query": None, "or_query": None}
+
+
+@server.tool()
+def memory_embed_status() -> dict:
+    """Whether semantic search is active, which model, and how many entries
+    have a current vector embedding (the rest are lexical-only until the next
+    `embed-backfill` run)."""
+    return memcore.embed_status()
 
 
 @server.tool()

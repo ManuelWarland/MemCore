@@ -16,7 +16,8 @@ SERVER_SCRIPT = str(Path(__file__).parent / "memcore_mcp.py")
 EXPECTED_TOOLS = {
     "memory_search", "memory_recent", "memory_get", "memory_scopes",
     "memory_stats", "memory_history", "memory_list", "memory_events",
-    "memory_write", "memory_archive", "memory_restore", "memory_healthcheck",
+    "memory_embed_status", "memory_write", "memory_archive", "memory_restore",
+    "memory_healthcheck",
 }
 
 

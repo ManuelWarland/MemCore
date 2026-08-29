@@ -27,6 +27,7 @@ is where those get written once and found again — by you or by the next assist
 | **Per-connection access control** | `--readonly` and/or `--scope <name>` sandboxing, **enforced server-side** (a locked connection cannot escape its scope even if it asks). |
 | **Secret hygiene** | Secret-shaped values (API keys, tokens, `password: …` lines) are **redacted** on write — the note is kept, the value stripped, the redaction flagged and audited. `credentials_*` files are skipped from import by filename. |
 | **Incremental sync** | `memcore.py sync` re-imports only the Markdown files whose mtime changed since last time — a run that changed nothing touches the DB zero times. |
+| **Semantic search (optional)** | Install `sqlite-vec` + `fastembed` and MemCore blends FTS with vector nearest-neighbours on a multilingual sentence model — finds entries about the same idea with no shared keywords. Embeddings are computed off the write path (`embed-backfill`). Not installed → lexical only, zero deps. |
 | **Zero dependencies** | Python 3.11+ standard library only. No `pip install`. |
 
 ---
@@ -45,6 +46,12 @@ python scripts/memcore.py healthcheck   # end-to-end self-test (~1s)
 folder, an encrypted volume, a project directory).
 
 `memcore.db` is **git-ignored** — the code is shareable, your memories are not.
+
+**Semantic search (optional)** — `pip install -r requirements-semantic.txt`
+then `python scripts/memcore.py embed-backfill`. Adds `sqlite-vec` (a small C
+extension) and `fastembed` (ONNX, no PyTorch). The default model is
+`paraphrase-multilingual-mpnet-base-v2` (~1 GB, downloaded once); override with
+`MEMCORE_EMBED_MODEL`. Turn it off without uninstalling: `MEMCORE_SEMANTIC=0`.
 
 ---
 
@@ -71,6 +78,12 @@ python scripts/memcore.py add \
 python scripts/memcore.py sync                              # incremental .md -> DB re-import
 python scripts/memcore.py backup [--dest PATH]              # consistent copy (SQLite backup API)
 python scripts/memcore.py events [--scope X] [--prune-older-than-days 180]
+
+# Semantic search (needs: pip install -r requirements-semantic.txt)
+python scripts/memcore.py embed-backfill                    # embed entries missing a vector
+python scripts/memcore.py embed-status
+python scripts/memcore.py search "how do I back things up" --semantic   # vector only
+python scripts/memcore.py search "backup" --lexical                     # FTS only
 ```
 
 `type` is one of `user` / `feedback` / `project` / `reference` (see

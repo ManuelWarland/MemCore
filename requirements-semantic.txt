@@ -1,0 +1,7 @@
+# Optional — enables semantic (vector) search on top of the always-on FTS5.
+# Install with:  pip install -r requirements-semantic.txt
+# Then:          python scripts/memcore.py embed-backfill
+#
+# Without these, MemCore runs exactly as before (lexical search only, zero deps).
+sqlite-vec>=0.1.9
+fastembed>=0.8.0

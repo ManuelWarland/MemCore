@@ -69,6 +69,19 @@ def main():
         health = memcore.healthcheck()
         require(health["ok"], f"healthcheck failed: {health}")
 
+        # Semantic search (skipped if fastembed + sqlite-vec aren't installed)
+        if memcore.semantic_available():
+            memcore.add_entry("sem", "reference", "a", "Le capteur de couleur tombe en panne au bout de deux cycles I2C", actor="t", origin="t")
+            memcore.add_entry("sem", "reference", "b", "Sauvegarde chiffree du vault vers un stockage cloud chaque semaine", actor="t", origin="t")
+            bf = memcore.embed_backfill()
+            require(bf.get("ok") and bf["embedded"] >= 2, f"backfill failed: {bf}")
+            st = memcore.embed_status()
+            require(st["embedded"] >= 2, f"embed_status wrong: {st}")
+            hits = memcore.search("comment je protege mes fichiers", scope="sem", semantic=True)
+            require(hits and hits[0]["name"] == "b", f"semantic search wrong: {[h['name'] for h in hits]}")
+            hyb = memcore.search("stockage cloud", scope="sem", debug=True)
+            require(hyb["mode"] in ("hybrid", "and", "or_fallback"), f"unexpected hybrid mode: {hyb['mode']}")
+
         bridge = Path(__file__).parent / "memcore_bridge.py"
         env = dict(os.environ)
         proc = subprocess.run(

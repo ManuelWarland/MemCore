@@ -33,7 +33,11 @@ def execute(request, actor, origin, session_ref):
     scope = request.get("scope")
     name = request.get("name")
     if op == "memory_search":
-        result = memcore.search(request.get("query", ""), scope, request.get("limit", 20), request.get("debug", False))
+        # This process is spawned per request; loading the embedding model here
+        # (~5-15s cold) would dominate. Default to lexical; a caller that wants
+        # the semantic blend passes "semantic": true explicitly.
+        result = memcore.search(request.get("query", ""), scope, request.get("limit", 20),
+                                request.get("debug", False), semantic=request.get("semantic", False))
     elif op == "memory_recent":
         result = memcore.recent(request.get("limit", 20), scope, request.get("include_archived", False))
     elif op == "memory_get":

@@ -2,6 +2,7 @@
 """Phase A regression tests. Uses an isolated temporary database."""
 
 import importlib
+import json
 import os
 import subprocess
 import sys
@@ -90,6 +91,19 @@ def main():
             text=True, capture_output=True, env=env, timeout=15,
         )
         require(proc.returncode == 0 and '"ok": true' in proc.stdout.lower(), f"bridge failed: {proc.stderr} {proc.stdout}")
+
+        bridge_secret = "ghp_" + "B" * 36
+        proc = subprocess.run(
+            [sys.executable, str(bridge), "--actor", "codex", "--origin", "agentroom", "--session-ref", "room:1/run:secret"],
+            input=json.dumps({"op": "memory_write", "scope": "test", "type": "reference",
+                              "name": "bridge-redaction", "content": bridge_secret}) + "\n",
+            text=True, capture_output=True, env=env, timeout=15,
+        )
+        bridge_response = json.loads(proc.stdout)
+        require(proc.returncode == 0 and bridge_response["ok"], f"bridge write failed: {proc.stderr} {proc.stdout}")
+        require("github_token" in bridge_response["result"].get("redacted", []),
+                f"bridge omitted redaction metadata: {bridge_response}")
+        require(bridge_secret not in proc.stdout, "bridge leaked the redacted secret")
 
     print("PHASE_A_TESTS_OK")
 

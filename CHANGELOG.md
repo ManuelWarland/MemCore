@@ -37,6 +37,8 @@ Second pass. Two adversarial code reviews; every finding fixed.
 ### Fixed
 - `import_md.py` no longer aborts the whole re-import when one file trips a
   validation rule — it skips that file and continues.
+- The JSONL bridge now returns secret-redaction metadata just like the CLI and
+  MCP paths, so orchestrators can report that a write was safely caviarded.
 - MCP subprocess tests propagate `MEMCORE_DB_PATH` (they no longer touch a real
   database) and now assert on behaviour instead of printing.
 

@@ -49,12 +49,16 @@ def execute(request, actor, origin, session_ref):
     elif op == "memory_history":
         result = memcore.get_history(scope, name, request.get("limit", 20))
     elif op == "memory_write":
-        entry_id = memcore.add_entry(
+        write_result = memcore.add_entry(
             scope, request.get("type"), name, request.get("content", ""),
             request.get("description", ""), expected_updated_at=request.get("expected_updated_at"),
             actor=actor, origin=origin, session_ref=session_ref,
+            return_meta=True,
         )
-        return {"ok": True, "result": {"id": entry_id}}
+        result = {"id": write_result["id"]}
+        if write_result["redacted"]:
+            result["redacted"] = write_result["redacted"]
+        return {"ok": True, "result": result}
     elif op == "memory_archive":
         result = memcore.archive_entry(scope, name, request.get("reason"), actor, origin, session_ref)
         return {"ok": result}

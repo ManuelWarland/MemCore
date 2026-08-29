@@ -62,15 +62,46 @@ def semantic_available():
     return _semantic_import_ok
 
 
+_embedder_lock = None
+
+
 def _get_embedder():
-    global _embedder
-    if _embedder is None:
-        import warnings
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore")  # fastembed's mean-pooling notice; model works fine
-            from fastembed import TextEmbedding
-            _embedder = TextEmbedding(SEMANTIC_MODEL)
+    global _embedder, _embedder_lock
+    if _embedder is not None:
+        return _embedder
+    if _embedder_lock is None:
+        import threading
+        _embedder_lock = threading.Lock()
+    with _embedder_lock:
+        if _embedder is None:
+            import warnings
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")  # fastembed's mean-pooling notice; model works fine
+                from fastembed import TextEmbedding
+                _embedder = TextEmbedding(SEMANTIC_MODEL)
     return _embedder
+
+
+_embedder_loading = False
+
+
+def _embedder_ready(wait=False):
+    """Is the model in memory? If not and `wait` is False, kick off a one-time
+    background load and return False (the caller uses lexical this round, the
+    next call gets vectors) — so a long-lived server never stalls 5-15s on the
+    first search. If `wait` is True (a short-lived CLI that asked for semantic
+    explicitly), block and load it now."""
+    global _embedder_loading
+    if _embedder is not None:
+        return True
+    if wait:
+        _get_embedder()
+        return True
+    if not _embedder_loading:
+        _embedder_loading = True
+        import threading
+        threading.Thread(target=_get_embedder, daemon=True).start()
+    return False
 
 
 def _embed_texts(texts):
@@ -99,8 +130,10 @@ def _load_vec(con):
     try:
         import sqlite_vec
         con.enable_load_extension(True)
-        sqlite_vec.load(con)
-        con.enable_load_extension(False)
+        try:
+            sqlite_vec.load(con)
+        finally:
+            con.enable_load_extension(False)
         return True
     except Exception:
         return False
@@ -338,22 +371,35 @@ def connect(with_vec=None):
     _migrate(con)
     # sqlite-vec: load the extension and ensure the vector table exists, only
     # when semantic search is available (or explicitly requested).
-    if with_vec is not False and (with_vec or semantic_available()):
-        if _load_vec(con):
-            # If a vec table from a different embedding model (different dim)
-            # exists, drop it and mark every entry for re-embedding.
-            existing = con.execute(
-                "SELECT sql FROM sqlite_master WHERE name='entries_vec'").fetchone()
-            if existing and f"FLOAT[{EMBED_DIM}]" not in existing[0]:
-                con.execute("DROP TABLE entries_vec")
-                con.execute("UPDATE entries SET embedded_at=NULL")
-                con.commit()
-                existing = None
-            if not existing:
-                con.execute(
-                    f"CREATE VIRTUAL TABLE IF NOT EXISTS entries_vec USING vec0("
-                    f"entry_id INTEGER PRIMARY KEY, embedding FLOAT[{EMBED_DIM}])")
+    # Only load the vector extension when a caller explicitly asks for it
+    # (search with semantic on, embed_backfill). Everything else — recent, get,
+    # stats, add, sync, the JSONL bridge — must NOT pay `import fastembed`.
+    if with_vec:
+        _ensure_vec_table(con)
     return con
+
+
+def _ensure_vec_table(con):
+    """Load sqlite-vec and make sure `entries_vec` exists at the right dimension.
+    If a table from a different embedding model is found, drop it and mark every
+    entry for re-embedding. Guarded so a concurrent opener can't crash on it."""
+    if not _load_vec(con):
+        return False
+    try:
+        existing = con.execute(
+            "SELECT sql FROM sqlite_master WHERE name='entries_vec'").fetchone()
+        if existing and f"FLOAT[{EMBED_DIM}]" not in existing[0]:
+            con.execute("DROP TABLE IF EXISTS entries_vec")
+            con.execute("UPDATE entries SET embedded_at=NULL")
+            con.commit()
+            existing = None
+        if not existing:
+            con.execute(
+                f"CREATE VIRTUAL TABLE IF NOT EXISTS entries_vec USING vec0("
+                f"entry_id INTEGER PRIMARY KEY, embedding FLOAT[{EMBED_DIM}])")
+        return True
+    except sqlite3.OperationalError:
+        return con.execute("SELECT 1 FROM sqlite_master WHERE name='entries_vec'").fetchone() is not None
 
 
 def now():
@@ -461,32 +507,43 @@ def _run_fts_query(con, fts_query, scope, limit):
     return [dict(r) for r in rows]
 
 
-def _vector_search(con, query, scope, limit):
-    """K-nearest entries by embedding cosine distance. Returns list of dicts
-    with a `vdist` field, or None if unavailable."""
+def _vector_search(con, query, scope, limit, wait_for_model=False):
+    """K-nearest non-archived, still-fresh entries by embedding distance.
+    Returns list of dicts with `vdist`, or None if the vector layer isn't
+    ready (model still loading, no embeddings, extension absent)."""
     if con.execute("SELECT 1 FROM sqlite_master WHERE name='entries_vec'").fetchone() is None:
         return None
-    if con.execute("SELECT 1 FROM entries_vec LIMIT 1").fetchone() is None:
+    total_vecs = con.execute("SELECT COUNT(*) FROM entries_vec").fetchone()[0]
+    if total_vecs == 0:
+        return None
+    if not _embedder_ready(wait=wait_for_model):
         return None
     try:
         qvec = _vec_to_blob(_embed_texts([query])[0])
     except Exception:
         return None
+    # sqlite-vec 0.1.x can't filter metadata inside the KNN. When a scope is
+    # given, ask for every vector and filter after (cheap at this scale) so a
+    # niche scope isn't crowded out by a dominant one.
+    k = total_vecs if scope else max(limit * 4, 20)
     sql = """
         SELECT e.id, e.scope, e.type, e.name, e.description, e.content,
                e.source_path, e.updated_at, v.distance AS vdist
         FROM entries_vec v
         JOIN entries e ON e.id = v.entry_id
-        WHERE v.embedding MATCH ? AND k = ? AND e.archived_at IS NULL
+        WHERE v.embedding MATCH ? AND k = ?
+          AND e.archived_at IS NULL AND e.embedded_at IS NOT NULL
     """
-    params = [qvec, max(limit * 4, 20)]
-    rows = [dict(r) for r in con.execute(sql, params).fetchall()]
+    rows = [dict(r) for r in con.execute(sql, [qvec, k]).fetchall()]
+    for r in rows:
+        r.setdefault("snippet", None)  # shape parity with FTS rows
     if scope:
+        # SECURITY: a scope-locked connection must never see another scope's rows.
         rows = [r for r in rows if r["scope"] == scope]
     return rows[:limit * 4]
 
 
-def search(query, scope=None, limit=20, debug=False, semantic=None):
+def search(query, scope=None, limit=20, debug=False, semantic=None, wait_for_model=False):
     """Search remembered facts.
 
     Lexical layer (always): FTS5 MATCH combines terms with implicit AND. If the
@@ -513,22 +570,23 @@ def search(query, scope=None, limit=20, debug=False, semantic=None):
     con = connect(with_vec=use_semantic)
     try:
         con.row_factory = sqlite3.Row
-        fts_rows, mode, or_query = [], "and", None
-        if semantic is not True:
-            fts_rows = _run_fts_query(con, and_query, scope, limit) or []
-            if not fts_rows and len(tokens) > 1:
-                or_query = " OR ".join(f'"{t}"*' for t in tokens)
-                fts_rows = _run_fts_query(con, or_query, scope, limit) or []
-                if fts_rows:
-                    mode = "or_fallback"
-        vec_rows = _vector_search(con, query, scope, limit) if use_semantic else None
+        mode, or_query = "and", None
+        # Always run FTS (microseconds) so `semantic=True` still has something
+        # real to fall back on before any embeddings exist.
+        fts_rows = _run_fts_query(con, and_query, scope, limit) or []
+        if not fts_rows and len(tokens) > 1:
+            or_query = " OR ".join(f'"{t}"*' for t in tokens)
+            fts_rows = _run_fts_query(con, or_query, scope, limit) or []
+            if fts_rows:
+                mode = "or_fallback"
+        vec_rows = _vector_search(con, query, scope, limit, wait_for_model) if use_semantic else None
     finally:
         con.close()
 
     if semantic is True:
         rows = (vec_rows or [])[:limit]
-        mode = "vector" if vec_rows is not None else "vector_unavailable"
-        if not rows:  # nothing embedded yet -> fall back so the caller still gets hits
+        mode = "vector" if vec_rows else "vector_unavailable"
+        if not rows:  # nothing embedded / model still loading -> lexical
             rows, mode = fts_rows[:limit], "lexical_fallback"
     elif use_semantic and vec_rows:
         # Reciprocal-rank fusion of the two ranked lists.
@@ -740,7 +798,7 @@ def embed_backfill(limit=None, batch=64):
         return {"ok": False, "error": "semantic deps not installed (fastembed + sqlite-vec)"}
     con = connect(with_vec=True)
     try:
-        if con.execute("SELECT 1 FROM sqlite_master WHERE name='entries_vec'").fetchone() is None:
+        if not _ensure_vec_table(con):
             return {"ok": False, "error": "vec extension failed to load"}
         con.row_factory = sqlite3.Row
         sql = ("SELECT id, name, description, content FROM entries "
@@ -751,7 +809,12 @@ def embed_backfill(limit=None, batch=64):
         done = 0
         for i in range(0, len(rows), batch):
             chunk = rows[i:i + batch]
-            vectors = _embed_texts(_embed_input(r["name"], r["description"], r["content"]) for r in chunk)
+            try:
+                vectors = _embed_texts(_embed_input(r["name"], r["description"], r["content"]) for r in chunk)
+            except Exception as e:
+                remaining = con.execute(
+                    "SELECT COUNT(*) FROM entries WHERE embedded_at IS NULL AND archived_at IS NULL").fetchone()[0]
+                return {"ok": False, "error": f"embedding failed: {e}", "embedded": done, "remaining": remaining}
             ts = now()
             for r, vec in zip(chunk, vectors):
                 blob = _vec_to_blob(vec)
@@ -769,7 +832,7 @@ def embed_backfill(limit=None, batch=64):
 
 def _vec_to_blob(vec):
     import struct
-    return struct.pack(f"{len(vec)}f", *vec)
+    return struct.pack(f"<{len(vec)}f", *vec)  # sqlite-vec expects little-endian float32
 
 
 def embed_status():
@@ -1078,8 +1141,8 @@ def main():
     sp.add_argument("--scope", default=None)
     sp.add_argument("--limit", type=int, default=20)
     sp.add_argument("--debug", action="store_true", help="Show which query mode matched plus raw FTS queries")
-    sp.add_argument("--semantic", dest="semantic", action="store_true", help="Vector search only")
-    sp.add_argument("--lexical", dest="lexical", action="store_true", help="FTS only (no embeddings)")
+    sp.add_argument("--semantic", action="store_true", help="Vector search only (loads the model; ~5-15s cold)")
+    sp.add_argument("--hybrid", action="store_true", help="Blend FTS + vector (loads the model; ~5-15s cold)")
 
     sp = sub.add_parser("embed-backfill", help="Compute embeddings for entries missing one (semantic search)")
     sp.add_argument("--limit", type=int, default=None)
@@ -1099,6 +1162,7 @@ def main():
 
     sp = sub.add_parser("sync", help="Incremental re-import of ~/.claude/projects/*/memory/*.md (only changed files)")
     sp.add_argument("--root", default=None)
+    sp.add_argument("--no-embed", action="store_true", help="Skip the semantic embed-backfill afterwards")
 
     sp = sub.add_parser("get")
     sp.add_argument("--scope", required=True)
@@ -1174,6 +1238,11 @@ def main():
             redact_section_fn=import_md.redact_secrets,
             parse_fn=import_md.parse_memory_file,
         )
+        # Keep the semantic index in step with the files (best effort). This is
+        # the natural cadence — "refresh from disk" — so embeddings don't rot
+        # between manual runs. No-op if the deps aren't installed.
+        if not args.no_embed and result.get("ok") and semantic_available():
+            result["embed"] = embed_backfill()
         print(json.dumps(result, ensure_ascii=False))
         return 0 if result.get("ok") else 1
     elif args.cmd == "delete":
@@ -1213,10 +1282,15 @@ def main():
     elif args.cmd == "history":
         print(json.dumps(get_history(args.scope, args.name, args.limit), ensure_ascii=False, indent=2))
     elif args.cmd == "search":
-        sem = True if args.semantic else (False if args.lexical else None)
+        # A one-shot CLI process can't benefit from a background model load
+        # (it exits first), so the semantic layer is opt-in here and blocks on
+        # the model when asked. `--semantic` = vector only, `--hybrid` = both.
+        sem = True if args.semantic else (None if args.hybrid else False)
         try:
-            print(json.dumps(search(args.query, args.scope, args.limit, debug=args.debug, semantic=sem),
-                             ensure_ascii=False, indent=2))
+            print(json.dumps(
+                search(args.query, args.scope, args.limit, debug=args.debug,
+                       semantic=sem, wait_for_model=(sem is not False)),
+                ensure_ascii=False, indent=2))
         except ValidationError as e:
             print(json.dumps({"ok": False, "error": str(e)}))
             return 1

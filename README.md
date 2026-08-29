@@ -193,8 +193,8 @@ python scripts/memcore.py events [--scope X] [--prune-older-than-days 180]
 # Semantic search (needs: pip install -r requirements-semantic.txt)
 python scripts/memcore.py embed-backfill                    # embed entries missing a vector
 python scripts/memcore.py embed-status
-python scripts/memcore.py search "how do I back things up" --semantic   # vector only
-python scripts/memcore.py search "backup" --lexical                     # FTS only
+python scripts/memcore.py search "how do I back things up" --hybrid    # FTS + vector (loads the model, ~5-15s cold)
+python scripts/memcore.py search "how do I back things up" --semantic  # vector only
 ```
 
 `type` is one of `user` / `feedback` / `project` / `reference` (see

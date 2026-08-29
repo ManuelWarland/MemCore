@@ -77,7 +77,7 @@ def main():
             require(bf.get("ok") and bf["embedded"] >= 2, f"backfill failed: {bf}")
             st = memcore.embed_status()
             require(st["embedded"] >= 2, f"embed_status wrong: {st}")
-            hits = memcore.search("comment je protege mes fichiers", scope="sem", semantic=True)
+            hits = memcore.search("comment je protege mes fichiers", scope="sem", semantic=True, wait_for_model=True)
             require(hits and hits[0]["name"] == "b", f"semantic search wrong: {[h['name'] for h in hits]}")
             hyb = memcore.search("stockage cloud", scope="sem", debug=True)
             require(hyb["mode"] in ("hybrid", "and", "or_fallback"), f"unexpected hybrid mode: {hyb['mode']}")

@@ -192,8 +192,8 @@ python scripts/memcore.py add \
 python scripts/memcore.py sync                             # réimport .md incrémental
 python scripts/memcore.py backup [--dest CHEMIN]           # copie cohérente (API backup SQLite)
 python scripts/memcore.py embed-backfill                   # embeddings manquants (sémantique)
-python scripts/memcore.py search "comment je sauvegarde" --semantic   # vecteur seul
-python scripts/memcore.py search "backup" --lexical                   # FTS seul
+python scripts/memcore.py search "comment je sauvegarde en ligne" --hybrid    # FTS + vecteur (~5-15s à froid)
+python scripts/memcore.py search "comment je sauvegarde en ligne" --semantic  # vecteur seul
 ```
 
 `type` vaut `user` / `feedback` / `project` / `reference`. L'upsert est

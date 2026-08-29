@@ -1,20 +1,131 @@
 # MemCore
 
-> Local, file-based **shared long-term memory** for AI coding assistants.
-> One SQLite file. No daemon, no background capture, no cloud, no telemetry.
+### Your AI finally remembers.
 
-MemCore gives Claude Code, Codex CLI, Kimi Code, OpenCode, AgentRoom — or any tool
-that speaks [MCP](https://modelcontextprotocol.io) or can run a script — a single
-persistent memory: the facts, decisions and preferences that should survive across
-sessions and be searchable by **every** assistant working on the same projects.
+A single local database of the things worth keeping — decisions, corrections,
+"we already tried that" — shared by **every** AI tool you use, searchable in
+plain language, across every project.
 
-The problem it solves: each AI session starts blank. You re-explain the same
-constraints, the same "we already tried that", the same "no, use X not Y". MemCore
-is where those get written once and found again — by you or by the next assistant.
+No daemon. No cloud. No telemetry. One SQLite file you own.
+
+🇫🇷 [Version française](README.fr.md)
+
+---
+
+## You've had this conversation
+
+You're deep in a project with an AI agent. It's flying. Then the context window
+fills, or you close the terminal, or it's simply tomorrow — and you're back to
+square one with someone who has *no idea who you are*.
+
+You re-explain the constraints. You re-explain, again, that *"we already tried
+the buffered approach and it deadlocks."* You spent an hour last Tuesday
+arguing through a design trade-off; today the agent proposes the exact option
+you threw out.
+
+And then it gets worse — it starts making things up:
+
+> **You:** Remember in the payments project, when we fixed the double-charge
+> bug? What did we actually change?
+>
+> **Agent:** Yes — we added an idempotency key on the request, moved the retry
+> logic behind a mutex, and set the timeout to 8 seconds.
+
+None of that happened. You're not even in the payments repo right now. The
+agent had nothing real to work from, so it produced something that *sounds*
+right — and you only catch it because *you* remember. Most days, you don't.
+
+Now multiply that by every tool on your machine. One agent doesn't know what
+you told another. Each wakes up blank, every single time. **You** have become
+the memory. That's the bug.
+
+## MemCore fixes it
+
+MemCore is one small local database of **durable facts** — the decisions, the
+corrections, the "here's how this actually works", the "we ruled this out and
+here's why". Every AI tool you run reads and writes the *same* store.
+
+Ask before you re-explain:
+
+```
+memory_search "why did we drop the queue-based design"
+```
+
+> `project` note, from three weeks ago: *"queue design deadlocked under load on
+> 2026-08-02, reverted to direct calls."* — written in a different repo, found
+> anyway.
+
+Corrections that finally stick. Tell it once that the API returns cents, not
+dollars; write it down; the next session — and the next tool — starts already
+knowing.
+
+A paper trail. Every write is logged with who and when. Overwrites keep the old
+version. Nothing is ever silently lost.
+
+## What it feels like
+
+**Coming back:**
+
+> **You:** back — where were we?
+>
+> *(agent: `memory_recent`, `memory_search`)*
+>
+> **Agent:** Last real change, 40 minutes ago: v1.0.84 shipped, replacement
+> parts ordered, waiting on delivery. You were about to start the user guide.
+> Nothing else moved.
+
+Not a guess. Not a stale summary. The actual state, reconstructed from what was
+recorded.
+
+**The cross-project question — answered straight:**
+
+> **You:** we standardised on the EU date format everywhere, right?
+>
+> **Agent:** *(`memory_search "date format"`)* Yes — `feedback`, global scope,
+> still current. And there's a follow-up note: the CSV export is the one
+> exception, it stays ISO-8601.
+
+**Onboarding a fresh agent to a codebase:**
+
+```
+memory_list --scope my-project --type feedback
+```
+
+> Every lesson the last ten sessions learned about this repo, in one list —
+> before it writes a single line.
+
+**Not re-litigating a settled decision:** the agent starts to suggest an
+approach, checks MemCore first, finds the note where that approach already
+failed, and suggests something else. You never even see the wrong turn.
+
+**Closing out:**
+
+> **You:** memcorise all of this.
+>
+> *(agent writes the session's durable facts — what shipped, what's still open,
+> what we decided — into MemCore)*
+
+> ***memcorise*** *(verb): to write it down once, so no AI ever has to ask again.*
+
+## Why the name
+
+The **core** of memory. Not a transcript, not a log, not "everything the model
+ever saw" — the small, curated, durable part. The handful of facts that, if you
+lost them, you'd have to painfully earn back.
+
+## The one design decision that matters
+
+**Nothing is captured automatically.** No background hooks, no daemon watching
+your session. An AI writes to MemCore the way it writes a note to itself —
+deliberately, when something is actually worth keeping. That single choice is
+why it's small, fast, and doesn't break: there's almost nothing to go wrong.
 
 ---
 
 ## Features
+
+Works with Claude Code, Codex CLI, Kimi Code, OpenCode, AgentRoom — or any tool
+that speaks [MCP](https://modelcontextprotocol.io) or can run a script.
 
 | | |
 |---|---|

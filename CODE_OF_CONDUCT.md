@@ -16,7 +16,7 @@ lock, or delete contributions and block accounts that don't fit the above.
 
 If someone's behaviour is a problem and you can't or don't want to raise it in
 the open, use GitHub's private report:
-[Report a vulnerability](https://github.com/AngwattRider/MemCore/security/advisories/new)
+[Report a vulnerability](https://github.com/ManuelWarland/MemCore/security/advisories/new)
 (it's the same private channel, misuse of the label is fine here). Include links
 and enough context to see what happened. Reports are read; expect a reply within
 about a week.

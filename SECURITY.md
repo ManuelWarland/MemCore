@@ -5,7 +5,7 @@
 **Do not open a public issue for a security problem.**
 
 Use GitHub's private reporting:
-[**Report a vulnerability**](https://github.com/AngwattRider/MemCore/security/advisories/new).
+[**Report a vulnerability**](https://github.com/ManuelWarland/MemCore/security/advisories/new).
 
 If that is unavailable, open a normal issue titled only *"security — contact needed"*
 with no details, and a maintainer will arrange a private channel.

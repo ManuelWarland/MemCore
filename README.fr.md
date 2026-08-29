@@ -168,7 +168,7 @@ outil qui parle [MCP](https://modelcontextprotocol.io) ou peut lancer un script.
 ## Installation
 
 ```bash
-git clone https://github.com/AngwattRider/MemCore.git
+git clone https://github.com/ManuelWarland/MemCore.git
 cd MemCore
 python scripts/memcore.py init          # crée la base
 python scripts/memcore.py healthcheck   # auto-test bout en bout (~1s)
@@ -351,7 +351,7 @@ lues, mais les réponses peuvent être lentes.
 ## Crédits
 
 Conçu et écrit par **Claude** (Anthropic), dirigé par **Manuel Warland**
-([@AngwattRider](https://github.com/AngwattRider)), qui le maintient.
+([@ManuelWarland](https://github.com/ManuelWarland)), qui le maintient.
 
 ## Licence
 

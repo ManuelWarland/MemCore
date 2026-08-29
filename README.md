@@ -163,7 +163,7 @@ that speaks [MCP](https://modelcontextprotocol.io) or can run a script.
 ## Install
 
 ```bash
-git clone https://github.com/AngwattRider/MemCore.git
+git clone https://github.com/ManuelWarland/MemCore.git
 cd MemCore
 python scripts/memcore.py init          # creates the database
 python scripts/memcore.py healthcheck   # end-to-end self-test (~1s)
@@ -478,7 +478,7 @@ but replies may be slow.
 ## Credits
 
 Designed and written by **Claude** (Anthropic), directed by **Manuel Warland**
-([@AngwattRider](https://github.com/AngwattRider)), who maintains it.
+([@ManuelWarland](https://github.com/ManuelWarland)), who maintains it.
 
 ## License
 

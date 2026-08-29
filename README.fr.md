@@ -21,7 +21,7 @@ demain — et tu repars de zéro avec quelqu'un qui **ne sait plus qui tu es**.
 
 Tu ré-expliques les contraintes. Tu ré-expliques, encore, que *« on a déjà
 testé la version bufferisée et ça se bloque »*. Mardi dernier tu as passé une
-heure à trancher un compromis de conception ; aujourd'hui l'agent te propose
+heure à arbitrer un compromis de conception ; aujourd'hui l'agent te propose
 pile l'option que tu avais écartée.
 
 Et ça empire — il se met à inventer :
@@ -60,7 +60,7 @@ memory_search "pourquoi on a abandonné le design par file d'attente"
 
 Des corrections qui **tiennent**. Dis-lui une fois que l'API renvoie des
 centimes, pas des euros ; note-le ; la session suivante — et l'outil suivant —
-démarre en le sachant déjà.
+démarre déjà en le sachant.
 
 Une trace. Chaque écriture est journalisée avec qui et quand. Un écrasement
 garde l'ancienne version. Rien n'est jamais perdu en silence.
@@ -114,7 +114,7 @@ déjà échoué, et propose autre chose. Tu ne vois même pas le faux départ.
 ## Pourquoi ce nom
 
 Le **noyau** (*core*) de la mémoire. Pas un transcript, pas un log, pas « tout
-ce que le modèle a jamais vu » — la petite partie curée et durable. La poignée
+ce que le modèle a jamais vu » — la petite partie sélectionnée et durable. La poignée
 de faits que, si tu les perdais, tu devrais douloureusement re-gagner.
 
 ## La seule décision de conception qui compte
@@ -137,7 +137,7 @@ outil qui parle [MCP](https://modelcontextprotocol.io) ou peut lancer un script.
 | **Local & privé** | Un seul `memcore.db` (SQLite standard). Lisible par n'importe quel outil. Rien ne quitte la machine. |
 | **Multi-client** | Serveur MCP, CLI, pont JSON ligne-par-ligne, ou SQLite direct — tout lit/écrit la même base. |
 | **Recherche plein texte** | FTS5 sur tous les scopes. Une requête multi-mots tente d'abord un ET strict, puis retombe sur un OU classé — un mot manquant ne met jamais la recherche à zéro. |
-| **Provenance & audit** | Chaque création / mise à jour / conflit / refus / archivage / restauration est journalisé (`memory_events`) avec acteur + origine + référence de session. |
+| **Provenance & audit** | Chaque création / mise à jour / conflit / caviardage de secret / archivage / restauration est journalisé (`memory_events`) avec acteur + origine + référence de session. |
 | **Concurrence sûre** | Verrouillage optimiste via `expected_updated_at`. Deux écrivains simultanés → `conflict`, rien n'est écrasé en silence. |
 | **Suppressions réversibles** | Archivage (soft-delete) → restauration. Les versions écrasées sont gardées dans l'historique. |
 | **Contrôle d'accès par connexion** | `--readonly` et/ou `--scope <nom>`, **imposé côté serveur** (une connexion verrouillée ne peut pas sortir de son scope même si elle le demande). |
@@ -186,7 +186,7 @@ python scripts/memcore.py stats
 python scripts/memcore.py add \
   --scope "mon-projet" --type "feedback" \
   --name "prefere-les-tabs" \
-  --description "Résumé en une ligne, sert au classement au rappel" \
+  --description "Résumé en une ligne, sert au classement lors du rappel" \
   --content "La note complète."
 
 python scripts/memcore.py sync                             # réimport .md incrémental
@@ -253,7 +253,7 @@ c'est le mensonge confiant que cet outil existe pour supprimer.
 Écris quand :
 
 - une **décision** a été prise — surtout après un compromis ou un débat
-- une **correction** est tombée — *« non, c'est des centimes, pas des euros »*
+- une **correction** est intervenue — *« non, c'est des centimes, pas des euros »*
 - une **impasse** a été atteinte — *« essayé le design par file, deadlock en charge, revenu en arrière »*
 - tu as appris **comment le montage marche vraiment** et ce n'est ni dans le code ni dans la doc
 - l'utilisateur a exprimé une **préférence**
@@ -266,7 +266,7 @@ enregistrent déjà, ce qui ne compte que pour cette conversation, des
 ### Comment en écrire une
 
 - **Un fait par entrée.** `name` court en kebab-case. Une `description` qui dit
-  ce que le fait *est* — elle sert au classement au rappel — pas « notes sur X ».
+  ce que le fait *est* — elle sert au classement lors du rappel — pas « notes sur X ».
 - Choisis le `type` honnêtement : `user` / `feedback` / `project` / `reference`.
 - Pour `feedback` et `project` : mets **pourquoi ça compte** et **comment
   l'appliquer**. Une règle sans justification est mal appliquée ou ignorée.

@@ -55,6 +55,9 @@ memory_search "why did we drop the queue-based design"
 > 2026-08-02, reverted to direct calls."* — written in a different repo, found
 > anyway.
 
+And when there's nothing to find, it says so — a plain *no match*, not a
+confident answer improvised to fill the silence.
+
 Corrections that finally stick. Tell it once that the API returns cents, not
 dollars; write it down; the next session — and the next tool — starts already
 knowing.
@@ -119,6 +122,20 @@ lost them, you'd have to painfully earn back.
 your session. An AI writes to MemCore the way it writes a note to itself —
 deliberately, when something is actually worth keeping. That single choice is
 why it's small, fast, and doesn't break: there's almost nothing to go wrong.
+
+## What it won't do
+
+MemCore gives back the text that was written, with its scope, its date, its
+full edit history. Ask for something nobody ever recorded and you get *no
+match*: an honest blank, not a plausible answer improvised on the spot. The
+failure mode is "nothing found", which you notice, rather than "sounds right",
+which you don't.
+
+It doesn't go further than that. It won't judge whether a stored fact is still
+*true* or *current* — that's on whoever wrote it, which is why the writing
+discipline further down is strict. And an assistant can still misread a result
+it did retrieve. What MemCore removes is the one failure you can't catch on your
+own: an AI filling a gap in its knowledge with invention.
 
 ---
 

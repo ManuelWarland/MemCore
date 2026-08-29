@@ -58,6 +58,9 @@ memory_search "pourquoi on a abandonné le design par file d'attente"
 > deadlock en charge le 2026-08-02, revenu aux appels directs. »* — écrite dans
 > un autre dépôt, retrouvée quand même.
 
+Et quand il n'y a rien à trouver, il le dit — un simple *rien trouvé*, pas une
+réponse improvisée avec assurance pour combler le vide.
+
 Des corrections qui **tiennent**. Dis-lui une fois que l'API renvoie des
 centimes, pas des euros ; note-le ; la session suivante — et l'outil suivant —
 démarre déjà en le sachant.
@@ -124,6 +127,21 @@ démon qui surveille ta session. Une IA écrit dans MemCore comme elle s'écrit 
 note à elle-même — délibérément, quand quelque chose mérite vraiment d'être
 gardé. Ce seul choix explique pourquoi c'est petit, rapide, et pourquoi ça ne
 casse pas : il n'y a presque rien qui puisse mal tourner.
+
+## Ce que ça ne fait pas
+
+MemCore te rend le texte qui a été écrit, avec son scope, sa date, tout son
+historique. Demande-lui une chose que personne n'a jamais notée et tu obtiens
+*rien trouvé* : un blanc honnête, pas une réponse plausible improvisée sur le
+moment. Le mode d'échec, c'est « rien trouvé », que tu remarques, plutôt que
+« ça sonne juste », que tu ne remarques pas.
+
+Il ne va pas plus loin. Il ne juge pas si un fait stocké est encore *vrai* ou
+*d'actualité* — ça, c'est à celui qui l'écrit, d'où la discipline d'écriture
+stricte plus bas. Et une IA peut toujours mal lire un résultat qu'elle a
+pourtant retrouvé. Ce que MemCore supprime, c'est la seule panne que tu ne peux
+pas rattraper seul : une IA qui comble un trou de connaissance par de
+l'invention.
 
 ---
 

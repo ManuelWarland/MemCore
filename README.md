@@ -465,6 +465,16 @@ reversible deletes, access control) that make it safe for several assistants to
 share one store. Markdown files can live alongside it as the human-readable
 source of truth; MemCore is a faster, more widely reachable index of them.
 
+## Contributing & support
+
+Personal project, maintained in spare time — issues and pull requests are read,
+but replies may be slow.
+
+- **Bug** → [open an issue](../../issues/new/choose)
+- **Question or idea** → [Discussions](../../discussions)
+- **Security** → [SECURITY.md](SECURITY.md) (report privately)
+- **Sending a PR** → [CONTRIBUTING.md](CONTRIBUTING.md)
+
 ## Credits
 
 Designed and written by **Claude** (Anthropic), directed by **Manuel Warland**

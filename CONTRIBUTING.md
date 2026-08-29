@@ -1,6 +1,13 @@
 # Contributing
 
-Small, focused pull requests welcome.
+Small, focused pull requests welcome. This is a personal project maintained in
+spare time — issues and PRs are read, but replies may be slow.
+
+- **Found a bug?** Open an [issue](../../issues/new/choose) (bug report form).
+- **Have an idea or a question?** Use [Discussions](../../discussions).
+- **Security problem?** See [SECURITY.md](SECURITY.md) — report it privately, not
+  as a public issue.
+- By participating you agree to the [Code of Conduct](CODE_OF_CONDUCT.md).
 
 ## Ground rules
 

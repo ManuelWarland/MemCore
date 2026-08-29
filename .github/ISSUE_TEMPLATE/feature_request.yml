@@ -1,0 +1,44 @@
+name: Feature request
+description: Suggest a capability or change.
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        MemCore has one guiding constraint: **it stays small and boring**. Nothing
+        is captured automatically, there is no daemon, and the surface area is
+        deliberately narrow. Requests that fit that spirit are the ones most likely
+        to land. Open-ended ideas are also welcome in
+        [Discussions](../../discussions).
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem does this solve
+      description: The concrete situation you hit. Not the solution yet — the pain.
+      placeholder: |
+        When I ..., MemCore ..., and I have to ... every time.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What you'd like it to do
+      description: Your proposed behaviour. A rough CLI/MCP shape is helpful.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives you've considered
+      description: Workarounds, other tools, why they fall short.
+    validations:
+      required: false
+  - type: checkboxes
+    id: scope
+    attributes:
+      label: Fit check
+      options:
+        - label: This keeps MemCore a passive store (no automatic capture, no background process).
+          required: false
+        - label: I've searched existing issues and discussions for the same idea.
+          required: true

@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Question or idea (Discussions)
+    url: https://github.com/AngwattRider/MemCore/discussions
+    about: For "how do I…", usage questions, ideas, and show-and-tell. Issues are for bugs and concrete feature requests.
+  - name: Security vulnerability
+    url: https://github.com/AngwattRider/MemCore/security/advisories/new
+    about: Report privately. Do not open a public issue for a vulnerability. See SECURITY.md.

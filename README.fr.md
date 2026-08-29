@@ -338,6 +338,16 @@ Restauration, du pire au moins pire :
 
 ---
 
+## Contribuer & support
+
+Projet personnel, maintenu sur le temps libre — les issues et pull requests sont
+lues, mais les réponses peuvent être lentes.
+
+- **Bug** → [ouvrir une issue](../../issues/new/choose)
+- **Question ou idée** → [Discussions](../../discussions)
+- **Sécurité** → [SECURITY.md](SECURITY.md) (signalement privé)
+- **Envoyer une PR** → [CONTRIBUTING.md](CONTRIBUTING.md)
+
 ## Crédits
 
 Conçu et écrit par **Claude** (Anthropic), dirigé par **Manuel Warland**

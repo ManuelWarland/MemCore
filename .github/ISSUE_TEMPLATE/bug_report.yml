@@ -1,0 +1,64 @@
+name: Bug report
+description: Something in MemCore doesn't work as documented.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to file this. MemCore is a small personal
+        project — replies may be slow, but every report is read.
+
+        For a question or an idea rather than a defect, use
+        [Discussions](../../discussions) instead.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you did, what you expected, what you got instead.
+      placeholder: |
+        I ran `memcore.py search "..."` and expected ..., but got ...
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: The shortest sequence that triggers it. Exact commands help.
+      placeholder: |
+        1. python scripts/memcore.py init
+        2. python scripts/memcore.py add --scope x --type project --name y --content "..."
+        3. python scripts/memcore.py search "y"  -> wrong result
+    validations:
+      required: true
+  - type: input
+    id: access-method
+    attributes:
+      label: Access method
+      description: MCP, CLI, JSONL bridge, or raw SQLite? Which host if MCP (Claude Code, Codex, …).
+      placeholder: "CLI"
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: OS, Python version (`python --version`), MemCore version/commit, and whether semantic search deps are installed.
+      placeholder: |
+        Windows 11 / Python 3.12.3 / MemCore commit abc1234 / semantic: not installed
+    validations:
+      required: true
+  - type: textarea
+    id: healthcheck
+    attributes:
+      label: healthcheck output
+      description: Paste the output of `python scripts/memcore.py healthcheck` (redact anything sensitive — it shouldn't print secrets).
+      render: text
+    validations:
+      required: false
+  - type: textarea
+    id: extra
+    attributes:
+      label: Anything else
+      description: Logs, screenshots, a link to the entry, whatever helps.
+    validations:
+      required: false

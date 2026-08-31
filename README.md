@@ -214,6 +214,51 @@ python scripts/memcore.py search "how do I back things up" --hybrid    # FTS + v
 python scripts/memcore.py search "how do I back things up" --semantic  # vector only
 ```
 
+**What comes back** — every command prints JSON on stdout. `search` returns the
+full entry plus a highlighted `snippet` and a relevance `rank`; `recent` and
+`list` return the lighter header shape; nothing found is a plain `[]`:
+
+```console
+$ python scripts/memcore.py search "queue design deadlock"
+[
+  {
+    "id": 1,
+    "scope": "payments-api",
+    "type": "project",
+    "name": "queue-ingest-dropped",
+    "description": "Queue-based ingest abandoned — buffered writes deadlock under load",
+    "content": "Load test past 200 req/s deadlocks the buffered writer. Switched to direct writes plus optimistic retry. See PR 412. Do not reintroduce a write queue without a load test that proves it holds.",
+    "source_path": null,
+    "updated_at": "2026-08-31T19:02:21.258146+00:00",
+    "snippet": "Load test past 200 req/s [deadlocks] the buffered writer. Switched to...",
+    "rank": -1.3496562315877076
+  }
+]
+
+$ python scripts/memcore.py recent --limit 2
+[
+  {
+    "id": 3,
+    "scope": "payments-api",
+    "type": "reference",
+    "name": "oncall-runbook",
+    "description": "On-call runbook is in the wiki, not the repo",
+    "updated_at": "2026-08-31T19:02:21.863622+00:00"
+  },
+  {
+    "id": 2,
+    "scope": "global",
+    "type": "feedback",
+    "name": "prefers-direct-writes",
+    "description": "Prefers direct writes over buffering on latency-sensitive targets",
+    "updated_at": "2026-08-31T19:02:21.579769+00:00"
+  }
+]
+
+$ python scripts/memcore.py search "something never recorded"
+[]
+```
+
 `type` is one of `user` / `feedback` / `project` / `reference` (see
 [Conventions](#conventions)). Upsert is automatic on `scope` + `name`.
 

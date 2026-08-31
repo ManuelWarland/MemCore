@@ -214,6 +214,52 @@ python scripts/memcore.py search "comment je sauvegarde en ligne" --hybrid    # 
 python scripts/memcore.py search "comment je sauvegarde en ligne" --semantic  # vecteur seul
 ```
 
+**Ce que ça renvoie** — chaque commande écrit du JSON sur stdout. `search`
+renvoie l'entrée complète plus un `snippet` surligné et un `rank` de
+pertinence ; `recent` et `list` renvoient la forme d'en-tête allégée ; rien
+trouvé = un simple `[]` :
+
+```console
+$ python scripts/memcore.py search "queue design deadlock"
+[
+  {
+    "id": 1,
+    "scope": "payments-api",
+    "type": "project",
+    "name": "queue-ingest-dropped",
+    "description": "Queue-based ingest abandoned — buffered writes deadlock under load",
+    "content": "Load test past 200 req/s deadlocks the buffered writer. Switched to direct writes plus optimistic retry. See PR 412. Do not reintroduce a write queue without a load test that proves it holds.",
+    "source_path": null,
+    "updated_at": "2026-08-31T19:02:21.258146+00:00",
+    "snippet": "Load test past 200 req/s [deadlocks] the buffered writer. Switched to...",
+    "rank": -1.3496562315877076
+  }
+]
+
+$ python scripts/memcore.py recent --limit 2
+[
+  {
+    "id": 3,
+    "scope": "payments-api",
+    "type": "reference",
+    "name": "oncall-runbook",
+    "description": "On-call runbook is in the wiki, not the repo",
+    "updated_at": "2026-08-31T19:02:21.863622+00:00"
+  },
+  {
+    "id": 2,
+    "scope": "global",
+    "type": "feedback",
+    "name": "prefers-direct-writes",
+    "description": "Prefers direct writes over buffering on latency-sensitive targets",
+    "updated_at": "2026-08-31T19:02:21.579769+00:00"
+  }
+]
+
+$ python scripts/memcore.py search "something never recorded"
+[]
+```
+
 `type` vaut `user` / `feedback` / `project` / `reference`. L'upsert est
 automatique sur `scope` + `name`.
 

@@ -2,11 +2,17 @@
 
 All notable changes to MemCore. Dates are ISO-8601.
 
-## [0.2.0] — 2026-08-29
+## [0.2.0] — 2026-08-31
 
 Second pass. Two adversarial code reviews; every finding fixed.
 
 ### Added
+- `version` / `--version` / `-V` — print this checkout's version + schema number
+  (offline). `check-updates` — an **opt-in** command that asks GitHub for the
+  latest release tag and compares; it is the *only* command that ever makes a
+  network call, never runs automatically, and sends no token or telemetry.
+- README (EN + FR): a "What comes back" block with real JSON output, and an
+  "Updating" section (`git pull`; the DB self-migrates on next run).
 - **Optional semantic search** — install `sqlite-vec` + `fastembed` and `search`
   blends FTS with vector nearest-neighbours on a multilingual sentence model
   (`paraphrase-multilingual-mpnet-base-v2` by default). Embeddings are computed

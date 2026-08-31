@@ -183,6 +183,29 @@ extension) and `fastembed` (ONNX, no PyTorch). The default model is
 
 ---
 
+## Updating
+
+MemCore is a git checkout, not a package — you update it the same way you got it:
+
+```bash
+cd MemCore
+git pull
+```
+
+That's the whole procedure. **Your database is untouched** — `memcore.db` is
+git-ignored, and if a release changes the schema the next command you run
+migrates it in place (forward-only, idempotent, existing entries preserved).
+Read `CHANGELOG.md` for what changed.
+
+- `python scripts/memcore.py version` — what you're on right now (offline).
+- `python scripts/memcore.py check-updates` — asks GitHub for the latest release
+  tag and tells you if you're behind. **Opt-in**: this is the only command in
+  MemCore that makes a network call, it never runs on its own, and it sends
+  nothing but an unauthenticated GET.
+- Prefer a notification? On GitHub, **Watch → Custom → Releases**.
+
+---
+
 ## Use it — as a human (CLI)
 
 Works everywhere, no MCP support required. Everything prints JSON on stdout.
@@ -195,6 +218,7 @@ python scripts/memcore.py list --type feedback              # all feedback entri
 python scripts/memcore.py list --archived                   # what's archived
 python scripts/memcore.py scopes
 python scripts/memcore.py stats
+python scripts/memcore.py version                           # this checkout's version + schema (offline)
 
 python scripts/memcore.py add \
   --scope "my-project" \

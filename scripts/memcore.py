@@ -23,6 +23,11 @@ for _stream in (sys.stdout, sys.stderr, sys.stdin):
     if hasattr(_stream, "reconfigure"):
         _stream.reconfigure(encoding="utf-8")
 
+__version__ = "0.2.0"
+# Only used by the opt-in `check-updates` subcommand — the single command that
+# ever makes a network call. Nothing else in MemCore talks to the outside.
+REPO = "ManuelWarland/MemCore"
+
 DB_PATH = Path(os.environ.get("MEMCORE_DB_PATH", Path.home() / "MemCore" / "memcore.db"))
 # Default backup destination for `memcore.py backup`. Override with the
 # MEMCORE_BACKUP_PATH env var or the --dest flag (e.g. to drop the copy inside
@@ -1120,8 +1125,70 @@ def healthcheck(scope=None, actor="system", origin="healthcheck", session_ref=No
     return {"ok": ok, "checks": checks, "db_path": str(DB_PATH)}
 
 
+def version_info():
+    """Local, offline. What this checkout is."""
+    return {
+        "memcore": __version__,
+        "schema": SCHEMA_VERSION,
+        "python": ".".join(str(n) for n in sys.version_info[:3]),
+    }
+
+
+def _parse_semver(tag):
+    """'v0.2.0' / '0.2.0' -> (0, 2, 0). Non-numeric parts drop to 0."""
+    parts = tag.lstrip("vV").split(".")[:3]
+    out = []
+    for part in parts:
+        num = ""
+        for ch in part:
+            if ch.isdigit():
+                num += ch
+            else:
+                break
+        out.append(int(num) if num else 0)
+    while len(out) < 3:
+        out.append(0)
+    return tuple(out)
+
+
+def check_updates(timeout=5):
+    """The ONLY command that makes a network call. Asks GitHub for the latest
+    release tag and compares it to this checkout. No token, no telemetry sent —
+    a plain unauthenticated GET. Never run automatically."""
+    import urllib.error
+    import urllib.request
+
+    url = f"https://api.github.com/repos/{REPO}/releases/latest"
+    req = urllib.request.Request(url, headers={
+        "Accept": "application/vnd.github+json",
+        "User-Agent": f"MemCore/{__version__}",
+    })
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as e:
+        if e.code == 404:
+            return {"ok": True, "current": __version__, "latest": None,
+                    "note": "no published release yet"}
+        return {"ok": False, "error": f"HTTP {e.code}", "current": __version__}
+    except Exception as e:
+        return {"ok": False, "error": f"{type(e).__name__}: {e}", "current": __version__}
+
+    latest = data.get("tag_name") or data.get("name") or ""
+    behind = _parse_semver(latest) > _parse_semver(__version__)
+    return {
+        "ok": True,
+        "current": __version__,
+        "latest": latest,
+        "update_available": behind,
+        "url": data.get("html_url"),
+        "hint": "cd MemCore && git pull  (the DB migrates itself on next run)" if behind else None,
+    }
+
+
 def main():
     p = argparse.ArgumentParser(description="MemCore CLI")
+    p.add_argument("--version", "-V", action="version", version=f"MemCore {__version__}")
     p.add_argument("--actor", default="cli", help="Trusted caller identity for audit")
     p.add_argument("--origin", default="terminal", help="Trusted caller origin for audit")
     p.add_argument("--session-ref", default=None, help="Optional session/room reference for audit")
@@ -1201,6 +1268,10 @@ def main():
     sub.add_parser("stats")
     sub.add_parser("init")
     sub.add_parser("healthcheck")
+    sub.add_parser("version", help="Print this checkout's version + schema (offline)")
+    sp = sub.add_parser("check-updates",
+                        help="Ask GitHub for the latest release (the only command that hits the network)")
+    sp.add_argument("--timeout", type=float, default=5.0)
 
     args = p.parse_args()
 
@@ -1313,6 +1384,12 @@ def main():
         result = healthcheck(actor=args.actor, origin=args.origin, session_ref=args.session_ref)
         print(json.dumps(result, ensure_ascii=False, indent=2))
         return 0 if result["ok"] else 1
+    elif args.cmd == "version":
+        print(json.dumps(version_info(), ensure_ascii=False, indent=2))
+    elif args.cmd == "check-updates":
+        result = check_updates(timeout=args.timeout)
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return 0 if result.get("ok") else 1
 
 
 if __name__ == "__main__":

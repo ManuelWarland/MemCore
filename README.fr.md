@@ -188,6 +188,30 @@ extension C) et `fastembed` (ONNX, pas PyTorch). Modèle par défaut :
 
 ---
 
+## Mise à jour
+
+MemCore est un dépôt git, pas un paquet — la mise à jour se fait comme
+l'installation :
+
+```bash
+cd MemCore
+git pull
+```
+
+C'est toute la procédure. **Ta base n'est pas touchée** — `memcore.db` est
+git-ignoré, et si une version change le schéma, la prochaine commande que tu
+lances le migre sur place (sens unique, idempotent, entrées existantes
+préservées). Voir `CHANGELOG.md` pour le détail.
+
+- `python scripts/memcore.py version` — ce que tu as installé (hors ligne).
+- `python scripts/memcore.py check-updates` — demande à GitHub le tag de la
+  dernière release et te dit si tu es en retard. **Sur demande** : c'est la
+  seule commande de MemCore qui fait un appel réseau, elle ne tourne jamais
+  toute seule, et elle n'envoie qu'un GET non authentifié.
+- Tu préfères une notification ? Sur GitHub, **Watch → Custom → Releases**.
+
+---
+
 ## En tant qu'humain (CLI)
 
 Tout affiche du JSON sur stdout.
@@ -200,6 +224,7 @@ python scripts/memcore.py list --type feedback             # toutes les leçons
 python scripts/memcore.py list --archived                  # ce qui est archivé
 python scripts/memcore.py scopes
 python scripts/memcore.py stats
+python scripts/memcore.py version                          # version + schéma de ce dépôt (hors ligne)
 
 python scripts/memcore.py add \
   --scope "mon-projet" --type "feedback" \

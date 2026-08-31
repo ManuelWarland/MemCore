@@ -1169,7 +1169,7 @@ def check_updates(timeout=5):
     except urllib.error.HTTPError as e:
         if e.code == 404:
             return {"ok": True, "current": __version__, "latest": None,
-                    "note": "no published release yet"}
+                    "note": "no release visible (none published yet, or the repo is private)"}
         return {"ok": False, "error": f"HTTP {e.code}", "current": __version__}
     except Exception as e:
         return {"ok": False, "error": f"{type(e).__name__}: {e}", "current": __version__}

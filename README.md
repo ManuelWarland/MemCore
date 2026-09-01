@@ -139,6 +139,33 @@ own: an AI filling a gap in its knowledge with invention.
 
 ---
 
+## A setup that works well around it
+
+MemCore is the **search layer**. It pairs well with a plain-files knowledge base
+and a bit of discipline — the "LLM wiki" pattern
+([Karpathy's note](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f)):
+
+- **Files as the source of truth** — a Markdown vault (Obsidian works well here).
+  Notes an AI can read, a human can edit, git can diff.
+- **A classification an AI can trust** — [IPCRA](https://asknadir.com/masterclass/methode-ipcra)
+  or [PARA](https://fortelabs.com/blog/para/): a few mutually-exclusive folders and
+  a sort test, so it's always unambiguous what's active, what's reference, what's
+  done. This matters double when an assistant reads the vault — the folder tells
+  it what's live.
+- **A schema file** the assistant reads first (how you want it to behave, who it's
+  working with). MemCore's `global` scope can hold this too.
+- **MemCore as the index** — fast recall across every scope at once, the piece a
+  folder of files alone can't give you. You keep files and index in sync; MemCore
+  never silently rewrites your files.
+- **An append-only log** for the time-ordered view per-file notes lose, and a
+  **periodic consistency pass** ("lint") for contradictions, stale paths and
+  orphaned notes.
+
+Pick the folder names and per-project templates that fit your work — the pattern
+is what matters, not the specific layout.
+
+---
+
 ## Features
 
 Works with Claude Code, Codex CLI, Kimi Code, OpenCode, AgentRoom — or any tool

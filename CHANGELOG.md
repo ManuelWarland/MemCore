@@ -2,6 +2,14 @@
 
 All notable changes to MemCore. Dates are ISO-8601.
 
+## [Unreleased]
+
+### Added
+- README (EN + FR): "A setup that works well around it" — the LLM-wiki pattern
+  MemCore is the search layer of (Markdown vault + IPCRA/PARA classification +
+  schema file + append-only log + periodic lint), tool-agnostic, no personal
+  layout prescribed.
+
 ## [0.2.0] — 2026-08-31
 
 Second pass. Two adversarial code reviews; every finding fixed.

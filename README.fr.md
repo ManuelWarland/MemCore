@@ -145,6 +145,35 @@ l'invention.
 
 ---
 
+## Un dispositif qui marche bien autour de lui
+
+MemCore est la **couche de recherche**. Il se marie bien avec une base de
+connaissance en fichiers plats et un peu de discipline — le motif « LLM wiki »
+([la note de Karpathy](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f)) :
+
+- **Les fichiers comme source de vérité** — un vault Markdown (Obsidian s'y prête
+  bien). Des notes qu'une IA lit, qu'un humain édite, que git compare.
+- **Un classement auquel une IA peut se fier** —
+  [IPCRA](https://asknadir.com/masterclass/methode-ipcra) ou
+  [PARA](https://fortelabs.com/blog/para/) : quelques dossiers mutuellement
+  exclusifs et un test de tri, pour qu'il soit toujours clair ce qui est actif,
+  ce qui est de référence, ce qui est terminé. Ça compte double quand une IA lit
+  le vault — le dossier lui dit ce qui est vivant.
+- **Un fichier de schéma** que l'IA lit en premier (comment tu veux qu'elle se
+  comporte, avec qui elle travaille). Le scope `global` de MemCore peut aussi
+  porter ça.
+- **MemCore comme index** — rappel rapide sur tous les scopes à la fois, ce
+  qu'un simple dossier de fichiers ne donne pas. Tu gardes fichiers et index
+  synchronisés ; MemCore ne réécrit jamais tes fichiers en silence.
+- **Un journal append-only** pour la vue chronologique que les notes éparpillées
+  perdent, et un **passage de cohérence périodique** (« lint ») pour les
+  contradictions, chemins périmés et notes orphelines.
+
+Choisis les noms de dossiers et les gabarits par projet qui collent à ton
+travail — c'est le motif qui compte, pas la disposition précise.
+
+---
+
 ## Fonctionnalités
 
 Fonctionne avec Claude Code, Codex CLI, Kimi Code, OpenCode, AgentRoom — ou tout

@@ -183,7 +183,7 @@ that speaks [MCP](https://modelcontextprotocol.io) or can run a script.
 | **Secret hygiene** | Secret-shaped values (API keys, tokens, `password: …` lines) are **redacted** on write — the note is kept, the value stripped, the redaction flagged and audited. `credentials_*` files are skipped from import by filename. |
 | **Incremental sync** | `memcore.py sync` re-imports only the Markdown files whose mtime changed since last time — a run that changed nothing touches the DB zero times. |
 | **Semantic search (optional)** | Install `sqlite-vec` + `fastembed` and MemCore blends FTS with vector nearest-neighbours on a multilingual sentence model — finds entries about the same idea with no shared keywords. Embeddings are computed off the write path (`embed-backfill`). Not installed → lexical only, zero deps. |
-| **Zero dependencies** | Python 3.11+ standard library only. No `pip install`. |
+| **Minimal dependencies** | The CLI, the JSON bridge and the importers use the Python 3.11+ standard library only. The MCP server needs one package: the official MCP SDK (`pip install "mcp>=2,<3"`). |
 
 ---
 
@@ -316,6 +316,9 @@ $ python scripts/memcore.py search "something never recorded"
 ---
 
 ## Use it — as an AI assistant (MCP)
+
+The MCP server needs the official MCP Python SDK, version 2. Install it once with
+`pip install "mcp>=2,<3"` (the CLI and the bridge need nothing).
 
 Add MemCore as a local MCP server. **The exact config shape differs per host** —
 here are ones verified working:

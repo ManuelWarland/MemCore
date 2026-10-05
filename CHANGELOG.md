@@ -4,6 +4,11 @@ All notable changes to MemCore. Dates are ISO-8601.
 
 ## [Unreleased]
 
+### Fixed
+- README (EN + FR): the MCP server needs the official MCP SDK v2
+  (`pip install "mcp>=2,<3"`); the README claimed zero dependencies. The CLI,
+  the bridge and the importers still use the standard library only.
+
 ### Added
 - README (EN + FR): "A setup that works well around it" — the LLM-wiki pattern
   MemCore is the search layer of (Markdown vault + IPCRA/PARA classification +

@@ -321,6 +321,9 @@ automatique sur `scope` + `name`.
 
 ## En tant qu'IA (MCP)
 
+Le serveur MCP a besoin du SDK MCP officiel pour Python, version 2. Installe-le une
+fois avec `pip install "mcp>=2,<3"` (la CLI et le pont n'ont besoin de rien).
+
 Ajoute MemCore comme serveur MCP local. **La forme exacte de la config dépend de
 l'hôte** — la table complète (Claude Code, Codex, Kimi, OpenCode) et les
 définitions des outils sont dans le [README anglais](README.md#use-it--as-an-ai-assistant-mcp).

@@ -4,12 +4,21 @@ All notable changes to MemCore. Dates are ISO-8601.
 
 ## [Unreleased]
 
+### Changed
+- MCP server: every tool parameter now has a description (schema coverage
+  0% -> 100%), every tool carries MCP annotations (read-only / idempotent /
+  non-destructive) and a human title, and each description says when to use
+  it rather than its neighbours (search vs get vs list vs recent, events vs
+  history...). The server also reports its version. Documentation only: the
+  code each tool runs is unchanged.
+
 ### Fixed
 - README (EN + FR): the MCP server needs the official MCP SDK v2
   (`pip install "mcp>=2,<3"`); the README claimed zero dependencies. The CLI,
   the bridge and the importers still use the standard library only.
 
 ### Added
+- `glama.json` (maintainer metadata for the Glama MCP directory).
 - README (EN + FR): "A setup that works well around it" — the LLM-wiki pattern
   MemCore is the search layer of (Markdown vault + IPCRA/PARA classification +
   schema file + append-only log + periodic lint), tool-agnostic, no personal

@@ -18,6 +18,12 @@ All notable changes to MemCore. Dates are ISO-8601.
   probe archived, and every later run failed its first write with
   `entry_archived`. The healthcheck now deletes leftover probes from its own
   throwaway scope before starting.
+- `healthcheck` no longer fails when two runs overlap (several sessions, the
+  MCP tool and the CLI all test the same store). Every run used the same probe
+  name, so one run deleted or archived the other's probe and turned
+  `optimistic_conflict`, `archive_restore` or `delete` red (3 out of 3 when
+  started together). Each run now uses its own probe names, and only probes
+  older than 10 minutes are purged as leftovers.
 - README (EN + FR): the MCP server needs the official MCP SDK v2
   (`pip install "mcp>=2,<3"`); the README claimed zero dependencies. The CLI,
   the bridge and the importers still use the standard library only.

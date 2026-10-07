@@ -990,6 +990,25 @@ HEALTHCHECK_SCOPE = "_healthcheck"
 HEALTHCHECK_NAME = "probe"
 
 
+PROBE_STALE_SECONDS = 600
+
+
+def _purge_stale_probes(scope):
+    cutoff = datetime.fromtimestamp(datetime.now(timezone.utc).timestamp() - PROBE_STALE_SECONDS,
+                                    timezone.utc).isoformat()
+    con = connect()
+    try:
+        names = [r[0] for r in con.execute(
+            "SELECT name FROM entries WHERE scope=? AND updated_at < ?", (scope, cutoff))]
+    finally:
+        con.close()
+    for name in names:
+        try:
+            delete_entry(scope, name)
+        except Exception:
+            pass
+
+
 def healthcheck(scope=None, actor="system", origin="healthcheck", session_ref=None):
     """Quick self-test (~1s), not a theoretical check — exercises the real
     write/read/search/history/delete paths end to end, including the
@@ -1023,17 +1042,22 @@ def healthcheck(scope=None, actor="system", origin="healthcheck", session_ref=No
 
     content = "healthcheck alpha bravo charlie"
 
-    # A previous run killed mid-way (the cockpit's 20 s timeout, 2026-10-07)
-    # can leave its probes behind, archived — every later write then fails
-    # with entry_archived and the healthcheck stays red for good. Start clean.
-    for leftover in (HEALTHCHECK_NAME, "guard-probe"):
-        try:
-            delete_entry(scope, leftover)
-        except Exception:
-            pass
+    # Each run uses its own probe names: the cockpit of every open session,
+    # memory_healthcheck over MCP and Codex all share this scope, and two
+    # runs on one fixed name broke each other (one deleted or archived the
+    # other's probe -> optimistic_conflict / archive_restore / delete red,
+    # reproduced 3 times out of 3 on 2026-10-07).
+    run_id = f"{os.getpid()}-{os.urandom(3).hex()}"
+    probe_name = f"{HEALTHCHECK_NAME}-{run_id}"
+    guard_name = f"guard-probe-{run_id}"
+
+    # A run killed mid-way (the cockpit's 20 s timeout) leaves its probes
+    # behind. Purge only those older than PROBE_STALE_SECONDS, never the
+    # probes of a run still in progress.
+    _purge_stale_probes(scope)
 
     try:
-        add_entry(scope, "reference", HEALTHCHECK_NAME, content, description="probe",
+        add_entry(scope, "reference", probe_name, content, description="probe",
                   actor=actor, origin=origin, session_ref=session_ref)
         record("write", True)
     except Exception as e:
@@ -1041,61 +1065,61 @@ def healthcheck(scope=None, actor="system", origin="healthcheck", session_ref=No
         return {"ok": False, "checks": checks, "db_path": str(DB_PATH)}
 
     try:
-        entry = get_entry(scope, HEALTHCHECK_NAME)
+        entry = get_entry(scope, probe_name)
         record("read", entry is not None and entry.get("content") == content,
                "" if entry else "get_entry returned None")
     except Exception as e:
         record("read", False, e)
 
     try:
-        hits = search("healthcheck alpha", scope=scope, limit=5, semantic=False)
-        record("search_and", any(h["name"] == HEALTHCHECK_NAME for h in hits), f"{len(hits)} hits")
+        hits = search("healthcheck alpha", scope=scope, limit=50, semantic=False)
+        record("search_and", any(h["name"] == probe_name for h in hits), f"{len(hits)} hits")
     except Exception as e:
         record("search_and", False, e)
 
     try:
         # One real term + one term guaranteed absent from the probe content
         # -> strict AND must return 0, forcing the OR-fallback path.
-        dbg = search("healthcheck zzznotarealword", scope=scope, limit=5, debug=True, semantic=False)
-        fallback_hit = any(r["name"] == HEALTHCHECK_NAME for r in dbg["results"])
+        dbg = search("healthcheck zzznotarealword", scope=scope, limit=50, debug=True, semantic=False)
+        fallback_hit = any(r["name"] == probe_name for r in dbg["results"])
         record("search_or_fallback", dbg["mode"] == "or_fallback" and fallback_hit,
                f"mode={dbg['mode']}, hits={len(dbg['results'])}")
     except Exception as e:
         record("search_or_fallback", False, e)
 
     try:
-        add_entry(scope, "reference", HEALTHCHECK_NAME, content + " delta", description="probe",
+        add_entry(scope, "reference", probe_name, content + " delta", description="probe",
                   actor=actor, origin=origin, session_ref=session_ref)
-        hist = get_history(scope, HEALTHCHECK_NAME, limit=5)
+        hist = get_history(scope, probe_name, limit=50)
         record("history", len(hist) >= 1, f"{len(hist)} row(s)")
     except Exception as e:
         record("history", False, e)
 
     try:
-        current = get_entry(scope, HEALTHCHECK_NAME)
+        current = get_entry(scope, probe_name)
         try:
-            add_entry(scope, "reference", HEALTHCHECK_NAME, content + " stale",
+            add_entry(scope, "reference", probe_name, content + " stale",
                       description="probe", expected_updated_at="stale-version",
                       actor=actor, origin=origin, session_ref=session_ref)
             conflict_ok = False
         except ConflictError:
             conflict_ok = True
-        unchanged = get_entry(scope, HEALTHCHECK_NAME)
+        unchanged = get_entry(scope, probe_name)
         record("optimistic_conflict", conflict_ok and unchanged["updated_at"] == current["updated_at"])
     except Exception as e:
         record("optimistic_conflict", False, e)
 
     try:
-        archived = archive_entry(scope, HEALTHCHECK_NAME, "healthcheck archive",
+        archived = archive_entry(scope, probe_name, "healthcheck archive",
                                  actor=actor, origin=origin, session_ref=session_ref)
-        hidden = get_entry(scope, HEALTHCHECK_NAME) is None
-        durable = get_entry(scope, HEALTHCHECK_NAME, include_archived=True) is not None
+        hidden = get_entry(scope, probe_name) is None
+        durable = get_entry(scope, probe_name, include_archived=True) is not None
         absent_from_search = not any(
-            h["name"] == HEALTHCHECK_NAME for h in search("healthcheck alpha", scope=scope, limit=5, semantic=False)
+            h["name"] == probe_name for h in search("healthcheck alpha", scope=scope, limit=50, semantic=False)
         )
-        restored = restore_entry(scope, HEALTHCHECK_NAME, "healthcheck restore",
+        restored = restore_entry(scope, probe_name, "healthcheck restore",
                                  actor=actor, origin=origin, session_ref=session_ref)
-        visible = get_entry(scope, HEALTHCHECK_NAME) is not None
+        visible = get_entry(scope, probe_name) is not None
         record("archive_restore", archived and hidden and durable and absent_from_search and restored and visible)
     except Exception as e:
         record("archive_restore", False, e)
@@ -1107,10 +1131,10 @@ def healthcheck(scope=None, actor="system", origin="healthcheck", session_ref=No
             "-----BEGIN OPENSSH PRIVATE KEY-----\n" + ("b64line" * 8) + "\n\n"
             "fin de note"
         )
-        meta = add_entry(scope, "reference", "guard-probe", probe,
+        meta = add_entry(scope, "reference", guard_name, probe,
                          description="probe", actor=actor, origin=origin,
                          session_ref=session_ref, return_meta=True)
-        stored = get_entry(scope, "guard-probe", include_archived=True)
+        stored = get_entry(scope, guard_name, include_archived=True)
         c = stored["content"] if stored else ""
         codes = set(meta.get("redacted", []))
         redacted_ok = (
@@ -1121,12 +1145,12 @@ def healthcheck(scope=None, actor="system", origin="healthcheck", session_ref=No
             and "note avant" in c and "fin de note" in c  # surrounding text kept
         )
         record("secret_guard_redacts", redacted_ok, f"redacted={sorted(codes)}")
-        delete_entry(scope, "guard-probe")
+        delete_entry(scope, guard_name)
     except Exception as e:
         record("secret_guard_redacts", False, e)
 
     try:
-        deleted = delete_entry(scope, HEALTHCHECK_NAME)
+        deleted = delete_entry(scope, probe_name)
         record("delete", deleted)
     except Exception as e:
         record("delete", False, e)

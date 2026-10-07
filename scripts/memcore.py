@@ -1023,6 +1023,15 @@ def healthcheck(scope=None, actor="system", origin="healthcheck", session_ref=No
 
     content = "healthcheck alpha bravo charlie"
 
+    # A previous run killed mid-way (the cockpit's 20 s timeout, 2026-10-07)
+    # can leave its probes behind, archived — every later write then fails
+    # with entry_archived and the healthcheck stays red for good. Start clean.
+    for leftover in (HEALTHCHECK_NAME, "guard-probe"):
+        try:
+            delete_entry(scope, leftover)
+        except Exception:
+            pass
+
     try:
         add_entry(scope, "reference", HEALTHCHECK_NAME, content, description="probe",
                   actor=actor, origin=origin, session_ref=session_ref)

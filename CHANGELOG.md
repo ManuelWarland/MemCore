@@ -13,6 +13,11 @@ All notable changes to MemCore. Dates are ISO-8601.
   code each tool runs is unchanged.
 
 ### Fixed
+- `healthcheck` no longer stays red forever after an interrupted run. A run
+  killed between "archive" and "restore" (e.g. by a caller's timeout) left the
+  probe archived, and every later run failed its first write with
+  `entry_archived`. The healthcheck now deletes leftover probes from its own
+  throwaway scope before starting.
 - README (EN + FR): the MCP server needs the official MCP SDK v2
   (`pip install "mcp>=2,<3"`); the README claimed zero dependencies. The CLI,
   the bridge and the importers still use the standard library only.

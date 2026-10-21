@@ -190,7 +190,7 @@ outil qui parle [MCP](https://modelcontextprotocol.io) ou peut lancer un script.
 | **Contrôle d'accès par connexion** | `--readonly` et/ou `--scope <nom>`, **imposé côté serveur** (une connexion verrouillée ne peut pas sortir de son scope même si elle le demande). |
 | **Hygiène des secrets** | Les valeurs qui ressemblent à un secret (clés API, tokens, lignes `password: …`) sont **caviardées** à l'écriture — la note est gardée, la valeur retirée, le caviardage signalé et audité. Les fichiers `credentials_*` sont exclus de l'import par leur nom. |
 | **Sync incrémental** | `memcore.py sync` ne réimporte que les fichiers Markdown dont le mtime a changé — un passage sans changement ne touche pas la base. |
-| **Recherche sémantique (option)** | Installe `sqlite-vec` + `fastembed` et MemCore mêle le FTS à une recherche vectorielle par plus proches voisins (modèle de phrases multilingue) — retrouve des entrées sur la même idée sans mot-clé commun. Les embeddings sont calculés hors du chemin d'écriture (`embed-backfill`). Non installé → lexical seul, zéro dépendance. |
+| **Recherche sémantique (option)** | Installe `sqlite-vec` + `fastembed` et MemCore mêle le FTS à une recherche vectorielle par plus proches voisins (modèle de phrases multilingue) — retrouve des entrées sur la même idée sans mot-clé commun. Les embeddings sont calculés hors du chemin d'écriture : un serveur MCP en lecture/écriture calcule ceux des entrées nouvelles ou modifiées en arrière-plan, quelques secondes après l'écriture, et `embed-backfill` le fait à la demande. Non installé → lexical seul, zéro dépendance. |
 
 ---
 
@@ -214,6 +214,16 @@ puis `python scripts/memcore.py embed-backfill`. Ajoute `sqlite-vec` (petite
 extension C) et `fastembed` (ONNX, pas PyTorch). Modèle par défaut :
 `paraphrase-multilingual-mpnet-base-v2` (~1 Go, téléchargé une fois) ;
 `MEMCORE_EMBED_MODEL` pour en changer, `MEMCORE_SEMANTIC=0` pour couper.
+
+**Calcul en arrière-plan** (serveur MCP seulement) : après une écriture, le
+serveur calcule les embeddings en attente en quelques secondes, sans ralentir
+l'écriture. Quand plusieurs serveurs partagent la même base (un par session
+d'IA), un bail enregistré dans la base fait qu'un seul d'entre eux charge le
+modèle pour ce travail. Le calcul démarre 90 s après le serveur, pour ne pas
+gêner le démarrage du client. Réglages : `MEMCORE_AUTO_EMBED=0` le coupe,
+`MEMCORE_AUTO_EMBED_DELAY` (secondes, 90 par défaut) et
+`MEMCORE_AUTO_EMBED_INTERVAL` (secondes entre deux vérifications au repos, 10
+par défaut). Les connexions en lecture seule ne le lancent jamais.
 
 ---
 

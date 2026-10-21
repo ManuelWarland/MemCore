@@ -16,6 +16,8 @@ import os
 import re
 import sqlite3
 import sys
+import threading
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -40,9 +42,10 @@ MAX_FIELD_CHARS = 500
 
 # ─── Optional semantic search ────────────────────────────────────────────────
 # Lexical FTS5 is always on. If `fastembed` + `sqlite-vec` are installed, entries
-# also get a vector embedding (computed lazily by `embed-backfill`, never on the
-# write path) and `search` blends FTS with vector nearest-neighbours. Disable
-# explicitly with MEMCORE_SEMANTIC=0.
+# also get a vector embedding (computed off the write path: by `embed-backfill`,
+# or within seconds by a long-lived MCP server's background worker, see
+# `auto_embed_step`) and `search` blends FTS with vector nearest-neighbours.
+# Disable explicitly with MEMCORE_SEMANTIC=0.
 SEMANTIC_MODEL = os.environ.get(
     "MEMCORE_EMBED_MODEL", "sentence-transformers/paraphrase-multilingual-mpnet-base-v2")
 EMBED_DIM = int(os.environ.get("MEMCORE_EMBED_DIM", "768"))
@@ -67,16 +70,15 @@ def semantic_available():
     return _semantic_import_ok
 
 
-_embedder_lock = None
+# Created at import time: a lazily created lock could be created twice by two
+# threads (a search and the background embedder) and load the 1 GB model twice.
+_embedder_lock = threading.Lock()
 
 
 def _get_embedder():
-    global _embedder, _embedder_lock
+    global _embedder
     if _embedder is not None:
         return _embedder
-    if _embedder_lock is None:
-        import threading
-        _embedder_lock = threading.Lock()
     with _embedder_lock:
         if _embedder is None:
             import warnings
@@ -104,7 +106,6 @@ def _embedder_ready(wait=False):
         return True
     if not _embedder_loading:
         _embedder_loading = True
-        import threading
         threading.Thread(target=_get_embedder, daemon=True).start()
     return False
 
@@ -317,6 +318,14 @@ BEGIN
     INSERT INTO entries_history (entry_id, scope, name, type, description, content, replaced_at)
     VALUES (old.id, old.scope, old.name, old.type, old.description, old.content, datetime('now'));
 END;
+
+-- Coordination between processes sharing this file (several MCP servers):
+-- a time-limited lease decides which one runs background embedding.
+CREATE TABLE IF NOT EXISTS leases (
+    name TEXT PRIMARY KEY,
+    holder TEXT NOT NULL,
+    expires_at REAL NOT NULL
+);
 """
 
 
@@ -795,10 +804,16 @@ def delete_entry(scope, name):
         con.close()
 
 
+def _pending_embeddings(con):
+    return con.execute(
+        "SELECT COUNT(*) FROM entries WHERE embedded_at IS NULL AND archived_at IS NULL").fetchone()[0]
+
+
 def embed_backfill(limit=None, batch=64):
     """Compute vector embeddings for entries that don't have a fresh one
     (`embedded_at IS NULL`), in batches. Never runs on the write path — call
-    this from a schedule or on demand. No-op if semantic deps aren't installed."""
+    this from a schedule, on demand, or via `auto_embed_step`. No-op if
+    semantic deps aren't installed."""
     if not semantic_available():
         return {"ok": False, "error": "semantic deps not installed (fastembed + sqlite-vec)"}
     con = connect(with_vec=True)
@@ -806,7 +821,7 @@ def embed_backfill(limit=None, batch=64):
         if not _ensure_vec_table(con):
             return {"ok": False, "error": "vec extension failed to load"}
         con.row_factory = sqlite3.Row
-        sql = ("SELECT id, name, description, content FROM entries "
+        sql = ("SELECT id, name, description, content, updated_at FROM entries "
                "WHERE embedded_at IS NULL AND archived_at IS NULL ORDER BY id")
         if limit:
             sql += f" LIMIT {int(limit)}"
@@ -817,22 +832,105 @@ def embed_backfill(limit=None, batch=64):
             try:
                 vectors = _embed_texts(_embed_input(r["name"], r["description"], r["content"]) for r in chunk)
             except Exception as e:
-                remaining = con.execute(
-                    "SELECT COUNT(*) FROM entries WHERE embedded_at IS NULL AND archived_at IS NULL").fetchone()[0]
-                return {"ok": False, "error": f"embedding failed: {e}", "embedded": done, "remaining": remaining}
+                return {"ok": False, "error": f"embedding failed: {e}", "embedded": done,
+                        "remaining": _pending_embeddings(con)}
             ts = now()
             for r, vec in zip(chunk, vectors):
+                # Only if the entry is unchanged since it was read: another
+                # process may have rewritten it while the model was busy, and
+                # its new text must not be marked fresh with the old vector.
+                cur = con.execute("UPDATE entries SET embedded_at=? WHERE id=? AND updated_at=?",
+                                  (ts, r["id"], r["updated_at"]))
+                if cur.rowcount != 1:
+                    continue
                 blob = _vec_to_blob(vec)
                 con.execute("DELETE FROM entries_vec WHERE entry_id=?", (r["id"],))
                 con.execute("INSERT INTO entries_vec(entry_id, embedding) VALUES (?, ?)", (r["id"], blob))
-                con.execute("UPDATE entries SET embedded_at=? WHERE id=?", (ts, r["id"]))
+                done += 1
             con.commit()
-            done += len(chunk)
-        remaining = con.execute(
-            "SELECT COUNT(*) FROM entries WHERE embedded_at IS NULL AND archived_at IS NULL").fetchone()[0]
-        return {"ok": True, "embedded": done, "remaining": remaining}
+        return {"ok": True, "embedded": done, "remaining": _pending_embeddings(con)}
     finally:
         con.close()
+
+
+EMBED_LEASE = "auto-embed"
+
+
+def acquire_lease(name, holder, ttl):
+    """Take or renew the lease `name` for `holder` for `ttl` seconds. True if
+    `holder` now holds it. Waits at most ~1 s for the write lock, then
+    returns False."""
+    con = connect()
+    try:
+        t = time.time()
+        row = con.execute("SELECT holder, expires_at FROM leases WHERE name=?", (name,)).fetchone()
+        if row and row[0] != holder and row[1] > t:
+            return False  # cheap read first: no write lock when someone else holds it
+        con.isolation_level = None
+        con.execute("PRAGMA busy_timeout=1000")
+        con.execute("BEGIN IMMEDIATE")
+        try:
+            row = con.execute("SELECT holder, expires_at FROM leases WHERE name=?", (name,)).fetchone()
+            if row and row[0] != holder and row[1] > t:
+                con.execute("ROLLBACK")
+                return False
+            con.execute("INSERT INTO leases(name, holder, expires_at) VALUES (?, ?, ?) "
+                        "ON CONFLICT(name) DO UPDATE SET holder=excluded.holder, "
+                        "expires_at=excluded.expires_at", (name, holder, t + ttl))
+            con.execute("COMMIT")
+            return True
+        except Exception:
+            con.execute("ROLLBACK")
+            raise
+    except sqlite3.OperationalError:
+        return False
+    finally:
+        con.close()
+
+
+def release_lease(name, holder):
+    """Give up `name` if `holder` holds it, so another process can take over
+    at once instead of waiting for the expiry. Best effort."""
+    try:
+        con = connect()
+        try:
+            con.execute("PRAGMA busy_timeout=1000")
+            con.execute("UPDATE leases SET expires_at=0 WHERE name=? AND holder=?", (name, holder))
+            con.commit()
+        finally:
+            con.close()
+    except sqlite3.Error:
+        pass
+
+
+# The first step may download (~1 GB, once) and load the model without renewing
+# the lease: hold it long enough that no other process starts loading too.
+FIRST_LOAD_TTL = 900
+
+
+def auto_embed_step(holder, ttl=120, batch=32):
+    """One unit of background embedding, for a long-lived process (the MCP
+    server calls it from a worker thread). Several processes may run it on the
+    same file: a lease keeps one of them as the embedder, renewed at every
+    step, so only that one loads the model for this work. Returns the
+    embed_backfill result, or {"ok": True, "skipped": reason}."""
+    if not acquire_lease(EMBED_LEASE, holder, ttl):
+        return {"ok": True, "skipped": "lease_held"}
+    # Checked once holding the lease: it imports fastembed, which the other
+    # processes then never pay for this work.
+    if not semantic_available():
+        release_lease(EMBED_LEASE, holder)
+        return {"ok": True, "skipped": "semantic_unavailable"}
+    con = connect()
+    try:
+        pending = _pending_embeddings(con)
+    finally:
+        con.close()
+    if not pending:
+        return {"ok": True, "embedded": 0, "remaining": 0}
+    if _embedder is None:
+        acquire_lease(EMBED_LEASE, holder, max(ttl, FIRST_LOAD_TTL))
+    return embed_backfill(limit=batch, batch=batch)
 
 
 def _vec_to_blob(vec):

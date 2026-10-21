@@ -83,6 +83,36 @@ def main():
             hyb = memcore.search("stockage cloud", scope="sem", debug=True)
             require(hyb["mode"] in ("hybrid", "and", "or_fallback"), f"unexpected hybrid mode: {hyb['mode']}")
 
+            # An entry rewritten while its vector is being computed must stay pending,
+            # not be marked fresh with the vector of its old text.
+            memcore.add_entry("sem", "reference", "c", "texte d'origine", actor="t", origin="t")
+            real_embed = memcore._embed_texts
+
+            def embed_during_rewrite(texts):
+                texts = list(texts)
+                memcore.add_entry("sem", "reference", "c", "texte réécrit pendant le calcul", actor="t", origin="t")
+                return real_embed(texts)
+
+            memcore._embed_texts = embed_during_rewrite
+            try:
+                bf = memcore.embed_backfill()
+            finally:
+                memcore._embed_texts = real_embed
+            require(bf["ok"] and bf["embedded"] == 0 and bf["remaining"] == 1, f"stale vector accepted: {bf}")
+            require(memcore.get_entry("sem", "c")["embedded_at"] is None, "rewritten entry marked fresh")
+
+            # One embedder at a time across processes; the holder renews, the lease expires.
+            require(memcore.acquire_lease("t-lease", "A", 60), "lease not granted")
+            require(not memcore.acquire_lease("t-lease", "B", 60), "lease granted twice")
+            require(memcore.acquire_lease("t-lease", "A", 60), "holder could not renew")
+            require(memcore.acquire_lease("t-lease", "A", -1), "holder could not shorten")
+            require(memcore.acquire_lease("t-lease", "B", 60), "expired lease not taken over")
+
+            step = memcore.auto_embed_step("worker-1")
+            require(step["ok"] and step["embedded"] == 1 and step["remaining"] == 0, f"auto step failed: {step}")
+            require(memcore.get_entry("sem", "c")["embedded_at"], "auto step did not embed")
+            require(memcore.auto_embed_step("worker-2").get("skipped") == "lease_held", "second worker not held off")
+
         bridge = Path(__file__).parent / "memcore_bridge.py"
         env = dict(os.environ)
         proc = subprocess.run(

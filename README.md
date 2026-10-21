@@ -182,7 +182,7 @@ that speaks [MCP](https://modelcontextprotocol.io) or can run a script.
 | **Per-connection access control** | `--readonly` and/or `--scope <name>` sandboxing, **enforced server-side** (a locked connection cannot escape its scope even if it asks). |
 | **Secret hygiene** | Secret-shaped values (API keys, tokens, `password: …` lines) are **redacted** on write — the note is kept, the value stripped, the redaction flagged and audited. `credentials_*` files are skipped from import by filename. |
 | **Incremental sync** | `memcore.py sync` re-imports only the Markdown files whose mtime changed since last time — a run that changed nothing touches the DB zero times. |
-| **Semantic search (optional)** | Install `sqlite-vec` + `fastembed` and MemCore blends FTS with vector nearest-neighbours on a multilingual sentence model — finds entries about the same idea with no shared keywords. Embeddings are computed off the write path (`embed-backfill`). Not installed → lexical only, zero deps. |
+| **Semantic search (optional)** | Install `sqlite-vec` + `fastembed` and MemCore blends FTS with vector nearest-neighbours on a multilingual sentence model — finds entries about the same idea with no shared keywords. Embeddings are computed off the write path: a read/write MCP server embeds new and edited entries in the background, a few seconds after the write, and `embed-backfill` does it on demand. Not installed → lexical only, zero deps. |
 | **Minimal dependencies** | The CLI, the JSON bridge and the importers use the Python 3.11+ standard library only. The MCP server needs one package: the official MCP SDK (`pip install "mcp>=2,<3"`). |
 
 ---
@@ -207,6 +207,15 @@ then `python scripts/memcore.py embed-backfill`. Adds `sqlite-vec` (a small C
 extension) and `fastembed` (ONNX, no PyTorch). The default model is
 `paraphrase-multilingual-mpnet-base-v2` (~1 GB, downloaded once); override with
 `MEMCORE_EMBED_MODEL`. Turn it off without uninstalling: `MEMCORE_SEMANTIC=0`.
+
+**Background embedding** (MCP server only): after a write, the server embeds
+the pending entries within a few seconds, without slowing the write. When
+several servers share the same database (one per AI session), a lease in the
+database lets only one of them load the model for this work. The worker starts
+90 s after the server, so it never competes with the client's own startup.
+Settings: `MEMCORE_AUTO_EMBED=0` turns it off, `MEMCORE_AUTO_EMBED_DELAY`
+(seconds, default 90) and `MEMCORE_AUTO_EMBED_INTERVAL` (seconds between idle
+checks, default 10). Read-only connections never run it.
 
 ---
 

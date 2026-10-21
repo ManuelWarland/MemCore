@@ -17,8 +17,14 @@ you haven't decided to fully trust yet.
 """
 
 import argparse
+import atexit
+import math
+import os
 import sqlite3
 import sys
+import threading
+import time
+import uuid
 from pathlib import Path
 from typing import Annotated
 
@@ -59,6 +65,66 @@ server = MCPServer(
     description="Central, fast, cross-project memory store shared across AI tools.",
     version=memcore.__version__,
 )
+
+
+# ---------------------------------------------------------------------------
+# Background embedding. A write resets the entry's vector; without this the
+# entry stays lexical-only until someone runs `embed-backfill`. The worker
+# embeds pending entries a few seconds after a write (from this server or any
+# other process sharing the file). Off on read-only connections, or with
+# MEMCORE_AUTO_EMBED=0.
+# ---------------------------------------------------------------------------
+
+def _env_seconds(name, default, minimum, maximum=3600.0):
+    try:
+        value = float(os.environ.get(name, default))
+    except ValueError:
+        return default
+    return min(maximum, max(minimum, value)) if math.isfinite(value) else default
+
+
+AUTO_EMBED = os.environ.get("MEMCORE_AUTO_EMBED", "1") != "0"
+AUTO_EMBED_INTERVAL = _env_seconds("MEMCORE_AUTO_EMBED_INTERVAL", 10.0, 2.0)
+# Wait before the first step: the client is starting every MCP server at once,
+# and loading the model then would slow the others' startup.
+AUTO_EMBED_DELAY = _env_seconds("MEMCORE_AUTO_EMBED_DELAY", 90.0, 0.0)
+_EMBED_TTL = max(120.0, 4 * AUTO_EMBED_INTERVAL)
+_EMBED_MAX_BACKOFF = 1800.0
+_EMBED_FAILURES_BEFORE_RELEASE = 3
+_EMBED_HOLDER = f"mcp-{os.getpid()}-{uuid.uuid4().hex[:8]}"
+_embed_wakeup = threading.Event()
+
+
+def _auto_embed_worker():
+    time.sleep(AUTO_EMBED_DELAY)
+    atexit.register(memcore.release_lease, memcore.EMBED_LEASE, _EMBED_HOLDER)
+    failures, last_error = 0, None
+    while True:
+        try:
+            result = memcore.auto_embed_step(_EMBED_HOLDER, ttl=_EMBED_TTL)
+        except Exception as e:  # never let the worker die
+            result = {"ok": False, "error": f"{type(e).__name__}: {e}"}
+        if result.get("skipped") == "semantic_unavailable":
+            return
+        if result.get("ok") is False:
+            # e.g. the model cannot load (offline, broken cache, no memory):
+            # back off instead of retrying the full load every few seconds,
+            # and after a few failures let another server try.
+            failures += 1
+            if result.get("error") != last_error:
+                last_error = result.get("error")
+                print(f"memcore auto-embed: {last_error}", file=sys.stderr)  # stderr: stdout is the stdio transport
+            if failures >= _EMBED_FAILURES_BEFORE_RELEASE:
+                memcore.release_lease(memcore.EMBED_LEASE, _EMBED_HOLDER)
+            time.sleep(min(_EMBED_MAX_BACKOFF, AUTO_EMBED_INTERVAL * 2 ** min(failures, 20)))
+            continue
+        if not result.get("skipped"):  # a real success, not just "another server holds the lease"
+            failures, last_error = 0, None
+        if result.get("remaining") and result.get("embedded"):
+            continue  # more pending and progress made: next batch right away
+        if _embed_wakeup.wait(AUTO_EMBED_INTERVAL):
+            time.sleep(3)  # let a burst of writes land before embedding
+        _embed_wakeup.clear()
 
 
 def _effective_scope(requested):
@@ -156,8 +222,9 @@ def memory_embed_status() -> dict:
 
     Use it to understand why memory_search finds (or misses) entries that
     share no keywords with the query: entries without a current embedding are
-    lexical-only until the next `embed-backfill` run (a CLI command, not an
-    MCP tool). For general counts use memory_stats; to test that the store
+    lexical-only until they are embedded: usually within 15 s by a read/write
+    MCP server's background worker, or by the `embed-backfill` CLI command. For
+    general counts use memory_stats; to test that the store
     works, memory_healthcheck. Read-only, takes no arguments.
     """
     return memcore.embed_status()
@@ -341,6 +408,7 @@ if not READONLY:
             # e.g. "database is locked" — another writer (a `sync` run) held the
             # lock past busy_timeout. Retryable; don't crash the tool call.
             return {"ok": False, "error": f"db_busy: {e} — retry"}
+        _embed_wakeup.set()
         out = {"ok": True, "id": meta["id"]}
         if meta["redacted"]:
             out["redacted"] = meta["redacted"]  # secret-shaped values were stripped before storing
@@ -384,6 +452,8 @@ if not READONLY:
             )
         except memcore.ValidationError as e:
             return {"ok": False, "error": str(e)}
+        if restored:
+            _embed_wakeup.set()
         return {"ok": restored}
 
     @server.tool(title="Self-test", annotations=_change(idempotent=True))
@@ -405,4 +475,8 @@ if not READONLY:
 
 
 if __name__ == "__main__":
+    # semantic_available() imports fastembed: checked by the worker after its
+    # delay (in auto_embed_step), not here on the startup path.
+    if AUTO_EMBED and not READONLY:
+        threading.Thread(target=_auto_embed_worker, name="memcore-auto-embed", daemon=True).start()
     server.run(transport="stdio")

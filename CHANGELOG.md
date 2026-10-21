@@ -4,6 +4,16 @@ All notable changes to MemCore. Dates are ISO-8601.
 
 ## [Unreleased]
 
+### Added
+- MCP server: background embedding. A write resets the entry's vector, and
+  until now only `embed-backfill` (run by hand or on a schedule) computed it
+  again, so recent and edited entries were invisible to semantic search. A
+  read/write server now embeds pending entries a few seconds after a write,
+  from any process sharing the database. A lease (`leases` table) keeps a
+  single embedder among several servers, so only one loads the model. Starts
+  90 s after the server. `MEMCORE_AUTO_EMBED`, `MEMCORE_AUTO_EMBED_DELAY`,
+  `MEMCORE_AUTO_EMBED_INTERVAL`.
+
 ### Changed
 - MCP server: every tool parameter now has a description (schema coverage
   0% -> 100%), every tool carries MCP annotations (read-only / idempotent /
@@ -13,6 +23,11 @@ All notable changes to MemCore. Dates are ISO-8601.
   code each tool runs is unchanged.
 
 ### Fixed
+- `embed_backfill` could mark an entry fresh with the vector of its previous
+  text, when another process rewrote the entry while the model was computing.
+  The entry is now marked only if it is unchanged since it was read.
+- The model lock was created lazily and two threads could each create one,
+  loading the 1 GB model twice. It is now created at import.
 - `healthcheck` no longer stays red forever after an interrupted run. A run
   killed between "archive" and "restore" (e.g. by a caller's timeout) left the
   probe archived, and every later run failed its first write with

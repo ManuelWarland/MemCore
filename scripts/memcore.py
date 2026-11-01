@@ -577,7 +577,10 @@ def search(query, scope=None, limit=20, debug=False, semantic=None, wait_for_mod
     if len(query) > MAX_QUERY_CHARS:
         raise ValidationError(f"query exceeds {MAX_QUERY_CHARS} chars")
     limit = _clamp_limit(limit)
-    tokens = query.split()
+    # FTS5 string literal: an embedded double quote must be doubled, otherwise a
+    # stray quote (e.g. `12"` or `"foo`) is a syntax error and the lexical search
+    # silently returns nothing (issue #1)
+    tokens = [t.replace('"', '""') for t in query.split()]
     and_query = " ".join(f'"{t}"*' for t in tokens)
     use_semantic = semantic is not False and semantic_available()
 

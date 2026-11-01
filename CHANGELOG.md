@@ -23,6 +23,10 @@ All notable changes to MemCore. Dates are ISO-8601.
   code each tool runs is unchanged.
 
 ### Fixed
+- `search`: a double quote inside a query word (`12"`, `"foo`, `a"b`) made the
+  FTS5 query a syntax error, so the lexical search silently returned nothing.
+  Quotes are now doubled before each word is wrapped, in both the AND query and
+  the OR fallback. Reported by @mattabate (#1).
 - `embed_backfill` could mark an entry fresh with the vector of its previous
   text, when another process rewrote the entry while the model was computing.
   The entry is now marked only if it is unchanged since it was read.

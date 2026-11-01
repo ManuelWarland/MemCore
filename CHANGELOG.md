@@ -4,6 +4,8 @@ All notable changes to MemCore. Dates are ISO-8601.
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-11-01
+
 ### Added
 - MCP server: background embedding. A write resets the entry's vector, and
   until now only `embed-backfill` (run by hand or on a schedule) computed it

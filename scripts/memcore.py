@@ -25,7 +25,7 @@ for _stream in (sys.stdout, sys.stderr, sys.stdin):
     if hasattr(_stream, "reconfigure"):
         _stream.reconfigure(encoding="utf-8")
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 # Only used by the opt-in `check-updates` subcommand — the single command that
 # ever makes a network call. Nothing else in MemCore talks to the outside.
 REPO = "ManuelWarland/MemCore"
